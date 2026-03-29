@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     fonts-noto-cjk \
-    libgl1 \
+    libgl1-mesa-glx \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -30,14 +30,14 @@ RUN pip install --no-cache-dir uv && \
 COPY . .
 
 # 暴露端口（Streamlit 默认 8501，但 Render 用 $PORT）
-ENV STREAMLIT_SERVER_PORT=${PORT:-8501}
+ENV PORT=10000
+ENV STREAMLIT_SERVER_PORT=10000
 ENV STREAMLIT_SERVER_HEADLESS=true
-ENV STREAMLIT_SERVER_RUN_ON_SAVE=true
 
-EXPOSE ${STREAMLIT_SERVER_PORT}
+EXPOSE 10000
 
-# 启动命令：直接运行 Streamlit app.py（不使用 wrapper 脚本）
+# 启动命令：直接运行 Streamlit app.py
 CMD ["streamlit", "run", "src/observability/dashboard/app.py", \
-     "--server.port=${PORT:-8501}", \
+     "--server.port=10000", \
      "--server.address=0.0.0.0", \
      "--browser.gatherUsageStats=false"]
