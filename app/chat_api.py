@@ -1,0 +1,646 @@
+"""FastAPI Chat API for Modular RAG MCP Server.
+
+Provides a browser-accessible chat interface backed by the full RAG pipeline:
+HybridSearch (Dense + Sparse + RRF) → optional Rerank → LLM generation.
+
+Endpoints:
+    GET  /         - Serve the Chat UI HTML page
+    GET  /health   - Service health and component status
+    POST /chat     - Execute RAG pipeline and return answer + citations
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, List, Optional
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+# Ensure project root is on sys.path
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+from src.core.query_engine.query_processor import QueryProcessor
+from src.core.query_engine.hybrid_search import create_hybrid_search
+from src.core.query_engine.dense_retriever import create_dense_retriever
+from src.core.query_engine.sparse_retriever import create_sparse_retriever
+from src.core.query_engine.reranker import create_core_reranker
+from src.core.settings import load_settings
+from src.core.trace import TraceContext
+from src.core.templates import (
+    TemplateManager, 
+    TemplateConfig, 
+    TemplateType, 
+    GradeLevel, 
+    LearningStyle
+)
+from src.ingestion.storage.bm25_indexer import BM25Indexer
+from src.libs.embedding.embedding_factory import EmbeddingFactory
+from src.libs.llm.base_llm import Message
+from src.libs.llm.llm_factory import LLMFactory
+from src.libs.vector_store.vector_store_factory import VectorStoreFactory
+from src.observability.logger import get_logger
+
+logger = get_logger(__name__)
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+# ---------------------------------------------------------------------------
+# Data models
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    question: str = Field(..., min_length=1, description="用户问题")
+    collection: str = Field(default="default", description="知识库集合名称")
+    top_k: Optional[int] = Field(default=None, description="检索数量，None 时使用配置文件默认值")
+    use_rerank: bool = Field(default=True, description="是否启用重排序（仍受配置文件约束）")
+
+
+class LessonPlanRequest(BaseModel):
+    topic: str = Field(..., min_length=1, description="教案主题")
+    collection: str = Field(default="default", description="知识库集合名称")
+    model: Optional[str] = Field(default=None, description="LLM模型名称，不指定则使用默认配置")
+    include_background: bool = Field(default=True, description="是否包含背景信息")
+    include_facts: bool = Field(default=True, description="是否包含相关常识")
+    include_examples: bool = Field(default=True, description="是否包含教学示例")
+    template_category: Optional[str] = Field(default=None, description="模板类别")
+    template_type: Optional[str] = Field(default=None, description="具体模板类型")
+    grade_level: Optional[str] = Field(default=None, description="年级（个性化模板使用）")
+    learning_style: Optional[str] = Field(default=None, description="学习风格（个性化模板使用）")
+
+
+class Citation(BaseModel):
+    source: str
+    score: float
+    text: str
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    citations: List[Citation] = Field(default_factory=list)
+
+
+class LessonPlanResponse(BaseModel):
+    topic: str
+    subject: Optional[str] = None
+    lesson_content: Optional[str] = None  # 完整的教案内容（Markdown格式）
+    additional_resources: List[Citation] = Field(default_factory=list)
+
+
+class HealthResponse(BaseModel):
+    status: str
+    components: dict
+
+
+# ---------------------------------------------------------------------------
+# Component helpers
+# ---------------------------------------------------------------------------
+
+def _build_components(settings: Any, collection: str) -> tuple:
+    """Initialise RAG components for a given collection (mirrors scripts/query.py)."""
+    vector_store = VectorStoreFactory.create(settings, collection_name=collection)
+    embedding_client = EmbeddingFactory.create(settings)
+    dense_retriever = create_dense_retriever(
+        settings=settings,
+        embedding_client=embedding_client,
+        vector_store=vector_store,
+    )
+    bm25_indexer = BM25Indexer(index_dir=str(_ROOT / "data" / "db" / "bm25" / collection))
+    sparse_retriever = create_sparse_retriever(
+        settings=settings,
+        bm25_indexer=bm25_indexer,
+        vector_store=vector_store,
+    )
+    sparse_retriever.default_collection = collection
+    query_processor = QueryProcessor()
+    hybrid_search = create_hybrid_search(
+        settings=settings,
+        query_processor=query_processor,
+        dense_retriever=dense_retriever,
+        sparse_retriever=sparse_retriever,
+    )
+    reranker = create_core_reranker(settings=settings)
+    return hybrid_search, reranker
+
+
+def _build_prompt(question: str, contexts: List[Any]) -> List[Message]:
+    """Build LLM messages from retrieved contexts."""
+    context_text = "\n\n".join(
+        f"[{i+1}] {(r.text or '').strip()[:500]}"
+        for i, r in enumerate(contexts)
+    )
+    return [
+        Message(
+            role="system",
+            content=(
+                "你是一个知识库问答助手。请严格基于以下提供的上下文内容回答用户问题。"
+                "如果上下文中没有足够信息，请明确告知用户，不要凭空捏造。"
+            ),
+        ),
+        Message(
+            role="user",
+            content=f"上下文：\n{context_text}\n\n问题：{question}",
+        ),
+    ]
+
+
+def _build_lesson_plan_prompt(topic: str, contexts: List[Any], include_background: bool, include_facts: bool, include_examples: bool) -> List[Message]:
+    """Build LLM messages for lesson plan generation."""
+    context_text = "\n\n".join(
+        f"[{i+1}] {(r.text or '').strip()[:500]}"
+        for i, r in enumerate(contexts)
+    )
+    
+    instructions = []
+    if include_background:
+        instructions.append("""1. 背景信息（详细展开）：
+   - 历史背景：详细介绍该主题的历史发展脉络，包括重要时间节点、关键人物和事件
+   - 科学意义：阐述该主题在科学史上的重要地位和影响
+   - 现实应用：说明该主题在现代社会的应用价值和实际意义
+   - 相关概念：介绍与该主题相关的其他重要概念和理论
+   
+   **人物背景（如适用）**：
+   - 生平简介：详细介绍相关科学家的生平、出生地、教育背景、主要成就
+   - 时代背景：介绍科学家所处的时代背景、社会环境、科技发展水平
+   - 研究历程：详细描述科学家的研究过程、遇到的困难、突破的关键时刻
+   - 人物性格：介绍科学家的性格特点、研究风格、轶事趣闻
+   - 历史评价：介绍该科学家在历史上的地位和影响
+   
+   **故事背景（如适用）**：
+   - 发现过程：详细描述重要发现的过程，包括时间、地点、关键事件
+   - 前因后果：介绍发现的背景、动机、以及后续影响
+   - 争议与挑战：介绍发现过程中遇到的质疑、争议和挑战
+   - 社会反响：介绍发现当时社会的反应和评价
+   - 历史意义：阐述该发现对人类文明的深远影响""")
+    
+    if include_facts:
+        instructions.append("""2. 核心知识点（详细列出）：
+   - 基本概念：清晰定义该主题的核心概念和术语
+   - 基本原理：详细阐述该主题的基本原理和规律
+   - 重要公式：列出相关的数学公式和表达式（如有）
+   - 实验现象：描述相关的实验现象和观测结果
+   - 常见误区：指出学生容易产生的误解和错误认识
+   
+   **相关人物与事件**：
+   - 同时代科学家：介绍同时期的其他重要科学家及其贡献
+   - 前驱工作：介绍该发现之前的相关研究和理论
+   - 后续发展：介绍该发现之后的重要进展和突破
+   - 跨学科影响：介绍该发现对其他学科领域的影响""")
+    
+    if include_examples:
+        instructions.append("""3. 教学活动设计（具体可行）：
+   - 演示实验：提供具体的实验设计，包括所需材料、操作步骤和预期结果
+   - 课堂活动：设计互动性强的课堂活动，激发学生兴趣
+   - 案例分析：提供真实的案例和应用场景
+   - 思考问题：设计启发性的思考问题，引导学生深入思考
+   - 拓展阅读：推荐相关的课外阅读材料和资源
+   
+   **情境教学设计**：
+   - 历史重现：设计让学生体验科学家发现过程的活动
+   - 角色扮演：设计让学生扮演科学家、进行辩论或讨论的活动
+   - 时间线构建：让学生构建相关发现的时间线
+   - 对比分析：让学生对比不同科学家的贡献或不同理论的异同
+   - 实地考察：推荐相关的博物馆、实验室等实地考察资源""")
+    
+    instructions_text = "\n\n".join(instructions)
+    
+    return [
+        Message(
+            role="system",
+            content=(
+                f"你是一名经验丰富的教师，擅长准备详细、深入的教案。请基于以下上下文内容，为主题'{topic}'生成一份详细的教案。\n"
+                "请严格基于提供的上下文内容，不要凭空捏造信息。如果上下文中没有足够信息，请明确说明。\n"
+                "首先，请根据主题内容推断这属于哪个学科（如物理、化学、生物、数学、语文、英语、历史、地理等），并在教案开头明确指出。\n\n"
+                "请按照以下结构组织教案：\n\n"
+                f"{instructions_text}\n\n"
+                "4. 参考资源：列出使用的参考资料，包括来源文档和页码"
+            ),
+        ),
+        Message(
+            role="user",
+            content=f"上下文：\n{context_text}\n\n请为'{topic}'生成一份详细的教案。",
+        ),
+    ]
+
+
+def _build_lesson_plan_prompt_fallback(req: "LessonPlanRequest") -> List[Message]:
+    """Build LLM messages for lesson plan generation when no context is available."""
+    instructions = []
+    if req.include_background:
+        instructions.append("""1. 背景信息（详细展开）：
+   - 历史背景：详细介绍该主题的历史发展脉络，包括重要时间节点、关键人物和事件
+   - 科学意义：阐述该主题在科学史上的重要地位和影响
+   - 现实应用：说明该主题在现代社会的应用价值和实际意义
+   - 相关概念：介绍与该主题相关的其他重要概念和理论""")
+    
+    if req.include_facts:
+        instructions.append("""2. 核心知识点（详细列出）：
+   - 基本概念：清晰定义该主题的核心概念和术语
+   - 基本原理：详细阐述该主题的基本原理和规律
+   - 重要公式：列出相关的数学公式和表达式（如有）
+   - 实验现象：描述相关的实验现象和观测结果
+   - 常见误区：指出学生容易产生的误解和错误认识""")
+    
+    if req.include_examples:
+        instructions.append("""3. 教学活动设计（具体可行）：
+   - 演示实验：提供具体的实验设计，包括所需材料、操作步骤和预期结果
+   - 课堂活动：设计互动性强的课堂活动，激发学生兴趣
+   - 案例分析：提供真实的案例和应用场景
+   - 思考问题：设计启发性的思考问题，引导学生深入思考
+   - 拓展阅读：推荐相关的课外阅读材料和资源""")
+    
+    instructions_text = "\n\n".join(instructions)
+    
+    return [
+        Message(
+            role="system",
+            content=(
+                f"你是一名经验丰富的教师，擅长准备详细、深入的教案。当前知识库中没有找到与主题'{req.topic}'相关的内容，\n"
+                "请基于你自己的知识为该主题生成一份详细的教案。请明确告知用户你是基于自身知识生成的，\n"
+                "而不是基于知识库内容。\n\n"
+                "首先，请根据主题内容推断这属于哪个学科（如物理、化学、生物、数学、语文、英语、历史、地理等），并在教案开头明确指出。\n\n"
+                "请按照以下结构组织教案：\n\n"
+                f"{instructions_text}\n\n"
+                "4. 参考资源：列出使用的参考资料（基于你的知识）"
+            ),
+        ),
+        Message(
+            role="user",
+            content=f"请为'{req.topic}'生成一份详细的教案。",
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# App lifecycle
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    config_path = os.environ.get("CHAT_CONFIG", str(_ROOT / "config" / "settings.yaml"))
+    logger.info(f"Loading settings from: {config_path}")
+    settings = load_settings(config_path)
+
+    collection = settings.vector_store.collection_name
+    hybrid_search, reranker = _build_components(settings, collection)
+    llm = LLMFactory.create(settings)
+
+    app.state.settings = settings
+    app.state.hybrid_search = hybrid_search
+    app.state.reranker = reranker
+    app.state.llm = llm
+    app.state.default_collection = collection
+
+    logger.info("Chat API components initialised successfully")
+    yield
+    logger.info("Chat API shutting down")
+
+
+app = FastAPI(title="RAG Chat API", lifespan=lifespan)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost", "http://127.0.0.1"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ---------------------------------------------------------------------------
+# Exception handler
+# ---------------------------------------------------------------------------
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled error on {request.url}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "服务器内部错误，请稍后重试"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_ui():
+    html_file = _STATIC_DIR / "index.html"
+    if not html_file.exists():
+        raise HTTPException(status_code=404, detail="UI file not found")
+    return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
+
+
+@app.get("/chat.html", response_class=HTMLResponse)
+async def serve_chat_ui():
+    html_file = _STATIC_DIR / "chat.html"
+    if not html_file.exists():
+        raise HTTPException(status_code=404, detail="Chat UI file not found")
+    return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
+
+
+@app.get("/lesson-plan.html", response_class=HTMLResponse)
+async def serve_lesson_plan_ui():
+    html_file = _STATIC_DIR / "lesson-plan.html"
+    if not html_file.exists():
+        raise HTTPException(status_code=404, detail="Lesson Plan UI file not found")
+    return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health(request: Request):
+    return HealthResponse(
+        status="ok",
+        components={
+            "hybrid_search": request.app.state.hybrid_search is not None,
+            "reranker": request.app.state.reranker is not None,
+            "llm": request.app.state.llm is not None,
+        },
+    )
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest, request: Request):
+    state = request.app.state
+    settings = state.settings
+    hybrid_search = state.hybrid_search
+    reranker = state.reranker
+    llm = state.llm
+
+    top_k = req.top_k or settings.retrieval.fusion_top_k
+    trace = TraceContext(trace_type="chat")
+
+    # 1. Hybrid search
+    try:
+        hybrid_result = hybrid_search.search(
+            query=req.question,
+            top_k=top_k,
+            filters=None,
+            trace=trace,
+        )
+    except Exception as e:
+        logger.exception("HybridSearch failed")
+        raise HTTPException(status_code=500, detail="检索服务异常，请稍后重试") from e
+
+    results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results
+
+    # 2. Optional rerank
+    if results and req.use_rerank and reranker.is_enabled:
+        try:
+            rerank_result = reranker.rerank(query=req.question, results=results, top_k=top_k, trace=trace)
+            results = rerank_result.results
+        except Exception as e:
+            logger.warning(f"Reranking failed, using original order: {e}")
+
+    # 3. Build citations
+    citations = [
+        Citation(
+            source=(r.metadata or {}).get("source_path", "unknown"),
+            score=round(r.score, 4),
+            text=(r.text or "")[:200],
+        )
+        for r in results
+    ]
+
+    # 4. LLM generation
+    try:
+        if results:
+            messages = _build_prompt(req.question, results)
+        else:
+            # 知识库中没有相关内容，使用LLM基于自身知识回答
+            messages = [
+                Message(
+                    role="system",
+                    content=(
+                        "你是一个知识库问答助手。当前知识库中没有找到与用户问题相关的内容，"  
+                        "请基于你自己的知识回答用户问题。请明确告知用户你是基于自身知识回答的，"  
+                        "而不是基于知识库内容。"
+                    ),
+                ),
+                Message(
+                    role="user",
+                    content=f"问题：{req.question}",
+                ),
+            ]
+        llm_response = llm.chat(messages)
+        answer = llm_response.content
+    except Exception as e:
+        logger.exception("LLM generation failed")
+        raise HTTPException(status_code=500, detail="LLM 服务异常，请稍后重试") from e
+
+    return ChatResponse(answer=answer, citations=citations)
+
+
+@app.post("/lesson-plan", response_model=LessonPlanResponse)
+async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
+    state = request.app.state
+    settings = state.settings
+    hybrid_search = state.hybrid_search
+    reranker = state.reranker
+    
+    # 动态切换模型
+    if req.model:
+        from src.libs.llm.llm_factory import LLMFactory
+        from dataclasses import replace as dc_replace
+        from src.core.settings import LLMSettings
+        
+        # 创建新的LLM配置
+        new_llm_config = LLMSettings(
+            provider=settings.llm.provider,
+            model=req.model,
+            api_key=settings.llm.api_key,
+            base_url=settings.llm.base_url,
+            temperature=settings.llm.temperature,
+            max_tokens=settings.llm.max_tokens,
+        )
+        new_settings = dc_replace(settings, llm=new_llm_config)
+        llm = LLMFactory.create(new_settings)
+        logger.info(f"Using custom model: {req.model}")
+    else:
+        llm = state.llm
+
+    top_k = 15  # 教案需要更多的上下文信息
+    trace = TraceContext(trace_type="lesson_plan")
+
+    # 添加元数据
+    trace.metadata["topic"] = req.topic
+    trace.metadata["collection"] = req.collection
+    trace.metadata["model"] = req.model or settings.llm.model
+    trace.metadata["include_background"] = req.include_background
+    trace.metadata["include_facts"] = req.include_facts
+    trace.metadata["include_examples"] = req.include_examples
+    trace.metadata["template_category"] = req.template_category
+    trace.metadata["template_type"] = req.template_type
+    if req.grade_level:
+        trace.metadata["grade_level"] = req.grade_level
+    if req.learning_style:
+        trace.metadata["learning_style"] = req.learning_style
+
+    # 1. 扩展查询以获取更多相关信息
+    expanded_query = f"{req.topic} 背景 历史 原理 应用 实验 教学"
+    
+    # 2. Hybrid search
+    try:
+        hybrid_result = hybrid_search.search(
+            query=expanded_query,
+            top_k=top_k,
+            filters=None,
+            trace=trace,
+        )
+    except Exception as e:
+        logger.exception("HybridSearch failed for lesson plan")
+        raise HTTPException(status_code=500, detail="检索服务异常，请稍后重试") from e
+
+    results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results
+
+    # 3. Optional rerank
+    if results and reranker.is_enabled:
+        try:
+            rerank_result = reranker.rerank(query=expanded_query, results=results, top_k=top_k, trace=trace)
+            results = rerank_result.results
+        except Exception as e:
+            logger.warning(f"Reranking failed for lesson plan, using original order: {e}")
+
+    # 4. Build citations
+    citations = [
+        Citation(
+            source=(r.metadata or {}).get("source_path", "unknown"),
+            score=round(r.score, 4),
+            text=(r.text or "")[:200],
+        )
+        for r in results
+    ]
+
+    # 5. LLM generation for lesson plan
+    try:
+        template_manager = TemplateManager()
+        
+        if req.template_type:
+            template_type_str = req.template_type
+            template_type = None
+            for t in TemplateType:
+                if t.value == template_type_str:
+                    template_type = t
+                    break
+            
+            if template_type:
+                config = TemplateConfig(
+                    template_type=template_type,
+                    include_background=req.include_background,
+                    include_facts=req.include_facts,
+                    include_examples=req.include_examples,
+                )
+                
+                if req.grade_level:
+                    grade_map = {
+                        "primary": GradeLevel.PRIMARY,
+                        "middle": GradeLevel.MIDDLE,
+                        "high": GradeLevel.HIGH,
+                        "college": GradeLevel.COLLEGE,
+                    }
+                    config.grade_level = grade_map.get(req.grade_level, GradeLevel.MIDDLE)
+                
+                if req.learning_style:
+                    style_map = {
+                        "visual": LearningStyle.VISUAL,
+                        "auditory": LearningStyle.AUDITORY,
+                        "kinesthetic": LearningStyle.KINESTHETIC,
+                        "read_write": LearningStyle.READ_WRITE,
+                    }
+                    config.learning_style = style_map.get(req.learning_style, LearningStyle.VISUAL)
+                
+                messages = template_manager.build_prompt(
+                    config=config,
+                    topic=req.topic,
+                    contexts=results if results else [],
+                )
+            else:
+                if results:
+                    messages = _build_lesson_plan_prompt(
+                        topic=req.topic,
+                        contexts=results,
+                        include_background=req.include_background,
+                        include_facts=req.include_facts,
+                        include_examples=req.include_examples
+                    )
+                else:
+                    messages = _build_lesson_plan_prompt_fallback(req)
+        else:
+            if results:
+                messages = _build_lesson_plan_prompt(
+                    topic=req.topic,
+                    contexts=results,
+                    include_background=req.include_background,
+                    include_facts=req.include_facts,
+                    include_examples=req.include_examples
+                )
+            else:
+                messages = _build_lesson_plan_prompt_fallback(req)
+        import time
+        start_time = time.time()
+        llm_response = llm.chat(messages)
+        lesson_plan_content = llm_response.content
+        elapsed_ms = (time.time() - start_time) * 1000
+        trace.record_stage("llm_generation", {
+            "model": req.model or settings.llm.model,
+            "has_context": len(results) > 0,
+        }, elapsed_ms=elapsed_ms)
+    except Exception as e:
+        logger.exception("LLM generation failed for lesson plan")
+        raise HTTPException(status_code=500, detail="LLM 服务异常，请稍后重试") from e
+
+    # 提取学科信息
+    subject = None
+    lines = lesson_plan_content.split('\n')
+    for line in lines[:20]:  # 在前20行中查找学科信息
+        if "学科：" in line or "学科:" in line:
+            subject = line.split("：")[-1].split(":")[-1].strip()
+            break
+        elif "物理" in line and ("教案" in line or "主题" in line):
+            subject = "物理"
+            break
+        elif "化学" in line and ("教案" in line or "主题" in line):
+            subject = "化学"
+            break
+        elif "生物" in line and ("教案" in line or "主题" in line):
+            subject = "生物"
+            break
+        elif "数学" in line and ("教案" in line or "主题" in line):
+            subject = "数学"
+            break
+        elif "语文" in line and ("教案" in line or "主题" in line):
+            subject = "语文"
+            break
+        elif "英语" in line and ("教案" in line or "主题" in line):
+            subject = "英语"
+            break
+        elif "历史" in line and ("教案" in line or "主题" in line):
+            subject = "历史"
+            break
+        elif "地理" in line and ("教案" in line or "主题" in line):
+            subject = "地理"
+            break
+
+    # 保存trace
+    trace.finish()
+    from src.core.trace.trace_collector import TraceCollector
+    TraceCollector().collect(trace)
+
+    return LessonPlanResponse(
+        topic=req.topic,
+        subject=subject,
+        lesson_content=lesson_plan_content,
+        additional_resources=citations
+    )

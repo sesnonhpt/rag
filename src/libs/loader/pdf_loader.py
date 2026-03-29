@@ -213,15 +213,22 @@ class PdfLoader(BaseLoader):
             image_dir = self.image_storage_dir / doc_hash
             image_dir.mkdir(parents=True, exist_ok=True)
             
-            # Open PDF with PyMuPDF
+            # Open PDF with PyMuPDF and rebuild text page-by-page so that
+            # image placeholders stay close to the originating page content.
             doc = fitz.open(pdf_path)
-            
-            # Track text offset for placeholder insertion
-            text_offset = 0
+            page_blocks: List[str] = []
+            running_offset = 0
+            zoom = 2.0  # render scale for snapshots/crops (vision readability)
             
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 image_list = page.get_images(full=True)
+                page_text = (page.get_text("text") or "").strip()
+                
+                page_lines: List[str] = [f"## Page {page_num + 1}"]
+                if page_text:
+                    page_lines.append(page_text)
+                page_has_extracted_image = False
                 
                 for img_index, img_info in enumerate(image_list):
                     try:
@@ -229,7 +236,7 @@ class PdfLoader(BaseLoader):
                         xref = img_info[0]
                         base_image = doc.extract_image(xref)
                         image_bytes = base_image["image"]
-                        image_ext = base_image["ext"]
+                        image_ext = base_image.get("ext", "png")
                         
                         # Generate image ID and filename
                         image_id = self._generate_image_id(doc_hash, page_num + 1, img_index + 1)
@@ -247,13 +254,13 @@ class PdfLoader(BaseLoader):
                         except Exception:
                             width, height = 0, 0
                         
-                        # Create placeholder
+                        # Create placeholder and append to current page block
                         placeholder = f"[IMAGE: {image_id}]"
+                        page_lines.append(placeholder)
                         
-                        # Insert placeholder at end of current page's content
-                        # (simplified - in production, you'd parse page boundaries)
-                        insert_position = len(modified_text)
-                        modified_text += f"\n{placeholder}\n"
+                        # Compute offset in the final rebuilt text
+                        page_block_preview = "\n".join(page_lines)
+                        insert_position = running_offset + page_block_preview.rfind(placeholder)
                         
                         # Convert path to be relative to project root or absolute
                         try:
@@ -267,7 +274,7 @@ class PdfLoader(BaseLoader):
                             "id": image_id,
                             "path": str(relative_path),
                             "page": page_num + 1,
-                            "text_offset": insert_position + 1,  # +1 for newline
+                            "text_offset": insert_position,
                             "text_length": len(placeholder),
                             "position": {
                                 "width": width,
@@ -277,14 +284,162 @@ class PdfLoader(BaseLoader):
                             }
                         }
                         images_metadata.append(image_metadata)
+                        page_has_extracted_image = True
                         
                         logger.debug(f"Extracted image {image_id} from page {page_num + 1}")
                         
                     except Exception as e:
                         logger.warning(f"Failed to extract image {img_index} from page {page_num + 1}: {e}")
                         continue
+
+                # Fallback for PPT-converted PDFs:
+                # many slides are vector drawings and cannot be extracted via get_images().
+                # Prefer cropping "visual blocks" (drawings) for better retrieval.
+                # If none found, render the full page as a snapshot so vision captioning can still work.
+                if not page_has_extracted_image:
+                    try:
+                        # Render page once; reuse for crops and snapshot.
+                        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+
+                        # 1) Try to crop drawing regions (vector shapes / charts)
+                        crop_count = 0
+                        max_crops_per_page = 6
+                        min_area_ratio = 0.04  # skip tiny icons/logos
+
+                        drawings = []
+                        try:
+                            drawings = page.get_drawings() or []
+                        except Exception:
+                            drawings = []
+
+                        rects: List[fitz.Rect] = []
+                        for d in drawings:
+                            r = d.get("rect")
+                            if r is None:
+                                continue
+                            try:
+                                rect = fitz.Rect(r)
+                            except Exception:
+                                continue
+                            if rect.is_empty or rect.is_infinite:
+                                continue
+                            rects.append(rect)
+
+                        if rects:
+                            merged = self._merge_rects(rects)
+                            page_area = float(page.rect.get_area()) if hasattr(page.rect, "get_area") else float(page.rect.width * page.rect.height)
+
+                            for i, rect in enumerate(merged):
+                                if crop_count >= max_crops_per_page:
+                                    break
+                                # Filter by relative area
+                                rect_area = float(rect.get_area()) if hasattr(rect, "get_area") else float(rect.width * rect.height)
+                                if page_area > 0 and (rect_area / page_area) < min_area_ratio:
+                                    continue
+
+                                # Expand a bit to include labels around charts
+                                margin = 8.0  # PDF points, small pad
+                                expanded = fitz.Rect(
+                                    rect.x0 - margin,
+                                    rect.y0 - margin,
+                                    rect.x1 + margin,
+                                    rect.y1 + margin,
+                                ) & page.rect  # clamp to page
+
+                                # Convert to pixels (pixmap space)
+                                x0 = max(0, int(expanded.x0 * zoom))
+                                y0 = max(0, int(expanded.y0 * zoom))
+                                x1 = min(pix.width, int(expanded.x1 * zoom))
+                                y1 = min(pix.height, int(expanded.y1 * zoom))
+                                if x1 <= x0 or y1 <= y0:
+                                    continue
+
+                                # PyMuPDF expects an *integer* rectangle for Pixmap cropping.
+                                # Using IRect avoids internal type-check errors on some builds.
+                                crop_pix = fitz.Pixmap(pix, fitz.IRect(x0, y0, x1, y1))
+
+                                crop_seq = 800 + crop_count  # reserved for drawing crops
+                                crop_id = self._generate_image_id(doc_hash, page_num + 1, crop_seq)
+                                crop_path = image_dir / f"{crop_id}.png"
+                                crop_pix.save(str(crop_path))
+
+                                placeholder = f"[IMAGE: {crop_id}]"
+                                page_lines.append(placeholder)
+                                page_block_preview = "\n".join(page_lines)
+                                insert_position = running_offset + page_block_preview.rfind(placeholder)
+
+                                try:
+                                    relative_path = crop_path.relative_to(Path.cwd())
+                                except ValueError:
+                                    relative_path = crop_path.absolute()
+
+                                images_metadata.append(
+                                    {
+                                        "id": crop_id,
+                                        "path": str(relative_path),
+                                        "page": page_num + 1,
+                                        "text_offset": insert_position,
+                                        "text_length": len(placeholder),
+                                        "position": {
+                                            "width": crop_pix.width,
+                                            "height": crop_pix.height,
+                                            "page": page_num + 1,
+                                            "index": crop_seq,
+                                            "type": "page_crop",
+                                            "bbox_pdf": [expanded.x0, expanded.y0, expanded.x1, expanded.y1],
+                                        },
+                                    }
+                                )
+                                crop_count += 1
+
+                        # 2) If no crops were produced, snapshot whole page
+                        if crop_count == 0:
+                            snapshot_seq = 999  # reserved sequence for page snapshot
+                            snapshot_id = self._generate_image_id(doc_hash, page_num + 1, snapshot_seq)
+                            snapshot_path = image_dir / f"{snapshot_id}.png"
+                            pix.save(str(snapshot_path))
+
+                            placeholder = f"[IMAGE: {snapshot_id}]"
+                            page_lines.append(placeholder)
+
+                            page_block_preview = "\n".join(page_lines)
+                            insert_position = running_offset + page_block_preview.rfind(placeholder)
+
+                            try:
+                                relative_path = snapshot_path.relative_to(Path.cwd())
+                            except ValueError:
+                                relative_path = snapshot_path.absolute()
+
+                            images_metadata.append(
+                                {
+                                    "id": snapshot_id,
+                                    "path": str(relative_path),
+                                    "page": page_num + 1,
+                                    "text_offset": insert_position,
+                                    "text_length": len(placeholder),
+                                    "position": {
+                                        "width": pix.width,
+                                        "height": pix.height,
+                                        "page": page_num + 1,
+                                        "index": snapshot_seq,
+                                        "type": "page_snapshot",
+                                    },
+                                }
+                            )
+                            logger.debug(f"Generated page snapshot {snapshot_id} for page {page_num + 1}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to generate page snapshot for page {page_num + 1}: {e}"
+                        )
+                
+                page_block = "\n".join(page_lines).strip()
+                if page_block:
+                    page_blocks.append(page_block)
+                    running_offset += len(page_block) + 2  # account for \n\n join
             
             doc.close()
+            if page_blocks:
+                modified_text = "\n\n".join(page_blocks)
             
             if images_metadata:
                 logger.info(f"Extracted {len(images_metadata)} images from {pdf_path}")
@@ -297,6 +452,53 @@ class PdfLoader(BaseLoader):
             logger.warning(f"Image extraction failed for {pdf_path}: {e}")
             # Graceful degradation: return original text without images
             return text_content, []
+
+    @staticmethod
+    def _merge_rects(rects: List["fitz.Rect"]) -> List["fitz.Rect"]:
+        """Merge overlapping/nearby rectangles to reduce duplicate crops.
+
+        This is a simple O(n^2) merge suitable for a small number of drawing rects per page.
+        """
+        if not rects:
+            return []
+
+        # Sort for deterministic output
+        rects = sorted(rects, key=lambda r: (r.y0, r.x0, r.y1, r.x1))
+        merged: List[fitz.Rect] = []
+
+        def overlaps(a: fitz.Rect, b: fitz.Rect, pad: float = 4.0) -> bool:
+            ap = fitz.Rect(a.x0 - pad, a.y0 - pad, a.x1 + pad, a.y1 + pad)
+            bp = fitz.Rect(b.x0 - pad, b.y0 - pad, b.x1 + pad, b.y1 + pad)
+            return not (ap.x1 < bp.x0 or bp.x1 < ap.x0 or ap.y1 < bp.y0 or bp.y1 < ap.y0)
+
+        for r in rects:
+            placed = False
+            for i in range(len(merged)):
+                if overlaps(merged[i], r):
+                    merged[i] = merged[i] | r  # union
+                    placed = True
+                    break
+            if not placed:
+                merged.append(r)
+
+        # One more pass to ensure transitive merges
+        changed = True
+        while changed:
+            changed = False
+            out: List[fitz.Rect] = []
+            for r in merged:
+                merged_into_existing = False
+                for j in range(len(out)):
+                    if overlaps(out[j], r):
+                        out[j] = out[j] | r
+                        merged_into_existing = True
+                        changed = True
+                        break
+                if not merged_into_existing:
+                    out.append(r)
+            merged = out
+
+        return merged
     
     @staticmethod
     def _generate_image_id(doc_hash: str, page: int, sequence: int) -> str:

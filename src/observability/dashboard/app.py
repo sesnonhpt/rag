@@ -39,6 +39,11 @@ def _page_query_traces() -> None:
     render()
 
 
+def _page_lesson_plan_traces() -> None:
+    from src.observability.dashboard.pages.lesson_plan_traces import render
+    render()
+
+
 def _page_evaluation_panel() -> None:
     from src.observability.dashboard.pages.evaluation_panel import render
     render()
@@ -52,6 +57,7 @@ pages = [
     st.Page(_page_ingestion_manager, title="Ingestion Manager", icon="📥"),
     st.Page(_page_ingestion_traces, title="Ingestion Traces", icon="🔬"),
     st.Page(_page_query_traces, title="Query Traces", icon="🔎"),
+    st.Page(_page_lesson_plan_traces, title="Lesson Plan Traces", icon="📚"),
     st.Page(_page_evaluation_panel, title="Evaluation Panel", icon="📏"),
 ]
 

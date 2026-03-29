@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG 知识库对话</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #app {
+      width: 100%;
+      max-width: 800px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      box-shadow: 0 0 20px rgba(0,0,0,0.08);
+    }
+
+    header {
+      padding: 16px 20px;
+      background: #1a73e8;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    #config-bar {
+      padding: 10px 20px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      font-size: 13px;
+      color: #555;
+    }
+
+    #config-bar input {
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 13px;
+      width: 160px;
+    }
+
+    #chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .msg { display: flex; flex-direction: column; max-width: 85%; }
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.assistant, .msg.error { align-self: flex-start; align-items: flex-start; }
+
+    .bubble {
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .bubble { background: #1a73e8; color: #fff; border-bottom-right-radius: 4px; }
+    .msg.assistant .bubble { background: #f1f3f4; color: #202124; border-bottom-left-radius: 4px; }
+    .msg.error .bubble { background: #fce8e6; color: #c5221f; border-bottom-left-radius: 4px; }
+
+    .citations {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #666;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .citation-item {
+      background: #f8f9fa;
+      border-left: 3px solid #1a73e8;
+      padding: 4px 8px;
+      border-radius: 0 4px 4px 0;
+    }
+
+    .citation-source { font-weight: 500; color: #444; }
+    .citation-score { color: #888; margin-left: 6px; }
+
+    .loading-dots span {
+      display: inline-block;
+      width: 6px; height: 6px;
+      background: #999;
+      border-radius: 50%;
+      margin: 0 2px;
+      animation: bounce 1.2s infinite;
+    }
+    .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-6px); }
+    }
+
+    #input-bar {
+      padding: 12px 20px;
+      border-top: 1px solid #e0e0e0;
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+      background: #fff;
+    }
+
+    #question-input {
+      flex: 1;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+      resize: none;
+      height: 44px;
+      max-height: 120px;
+      overflow-y: auto;
+      font-family: inherit;
+      line-height: 1.5;
+    }
+
+    #question-input:focus { outline: none; border-color: #1a73e8; }
+
+    #send-btn {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0 20px;
+      font-size: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+      height: 44px;
+    }
+
+    #send-btn:hover:not(:disabled) { background: #1557b0; }
+    #send-btn:disabled, #question-input:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>RAG 知识库对话</header>
+
+    <div id="config-bar">
+      <label for="collection-input">知识库集合：</label>
+      <input id="collection-input" type="text" value="default" placeholder="collection name" />
+    </div>
+
+    <div id="chat-area"></div>
+
+    <div id="input-bar">
+      <textarea id="question-input" placeholder="输入问题，按 Enter 发送，Shift+Enter 换行…"></textarea>
+      <button id="send-btn">发送</button>
+    </div>
+  </div>
+
+  <script>
+    const chatArea = document.getElementById('chat-area');
+    const questionInput = document.getElementById('question-input');
+    const sendBtn = document.getElementById('send-btn');
+    const collectionInput = document.getElementById('collection-input');
+
+    function scrollToBottom() {
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function setLoading(loading) {
+      questionInput.disabled = loading;
+      sendBtn.disabled = loading;
+    }
+
+    function appendMessage(role, content, citations) {
+      const msg = document.createElement('div');
+      msg.className = `msg ${role}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      if (role === 'loading') {
+        bubble.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+        msg.className = 'msg assistant';
+        msg.id = 'loading-msg';
+      } else {
+        bubble.textContent = content;
+      }
+
+      msg.appendChild(bubble);
+
+      if (citations && citations.length > 0) {
+        const citDiv = document.createElement('div');
+        citDiv.className = 'citations';
+        citations.forEach((c, i) => {
+          const item = document.createElement('div');
+          item.className = 'citation-item';
+          item.innerHTML =
+            `<span class="citation-source">[${i+1}] ${escapeHtml(c.source)}</span>` +
+            `<span class="citation-score">score: ${c.score.toFixed(4)}</span>`;
+          citDiv.appendChild(item);
+        });
+        msg.appendChild(citDiv);
+      }
+
+      chatArea.appendChild(msg);
+      scrollToBottom();
+      return msg;
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    async function sendMessage() {
+      const question = questionInput.value.trim();
+      if (!question) return;
+
+      appendMessage('user', question);
+      questionInput.value = '';
+      setLoading(true);
+
+      const loadingMsg = appendMessage('loading');
+
+      try {
+        const resp = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            collection: collectionInput.value.trim() || 'default',
+          }),
+        });
+
+        loadingMsg.remove();
+
+        if (!resp.ok) {
+          let errText = `服务器错误 (${resp.status})`;
+          try { const d = await resp.json(); errText = d.error || d.detail || errText; } catch {}
+          appendMessage('error', errText);
+          return;
+        }
+
+        const data = await resp.json();
+        appendMessage('assistant', data.answer, data.citations);
+      } catch (err) {
+        loadingMsg.remove();
+        appendMessage('error', `请求失败：${err.message}`);
+      } finally {
+        setLoading(false);
+        scrollToBottom();
+      }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    questionInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // Auto-resize textarea
+    questionInput.addEventListener('input', () => {
+      questionInput.style.height = '44px';
+      questionInput.style.height = Math.min(questionInput.scrollHeight, 120) + 'px';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>教案准备 - RAG 知识库</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    :root {
+      --primary-color: #3b82f6;
+      --primary-hover: #2563eb;
+      --secondary-color: #f3f4f6;
+      --text-color: #1f2937;
+      --text-light: #6b7280;
+      --border-color: #e5e7eb;
+      --error-color: #ef4444;
+      --success-color: #10b981;
+      --background: #ffffff;
+      --card-background: #f9fafb;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      min-height: 100vh;
+      color: var(--text-color);
+    }
+
+    #app {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .header-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--primary-color);
+      margin-bottom: 8px;
+    }
+
+    .header-subtitle {
+      font-size: 16px;
+      color: var(--text-light);
+    }
+
+    .card {
+      background: var(--background);
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-color);
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: var(--text-color);
+    }
+
+    .form-group input[type="text"],
+    .form-group select {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.2s ease;
+    }
+
+    .form-group input[type="text"]:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    .checkbox-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .checkbox-item input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+    }
+
+    .checkbox-item label {
+      margin: 0;
+      font-size: 14px;
+      color: var(--text-color);
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+      background: var(--primary-color);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: var(--secondary-color);
+      color: var(--text-color);
+    }
+
+    .btn-secondary:hover {
+      background: #e5e7eb;
+    }
+
+    .result-section {
+      margin-top: 32px;
+    }
+
+    .result-card {
+      background: var(--card-background);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .result-card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--text-color);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .result-card-content {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-color);
+    }
+
+    .result-card-content ul {
+      margin-left: 20px;
+      margin-top: 8px;
+    }
+
+    .result-card-content li {
+      margin-bottom: 4px;
+    }
+
+    .resources-section {
+      margin-top: 24px;
+    }
+
+    .resource-item {
+      background: white;
+      border: 1px solid var(--border-color);
+      border-left: 3px solid var(--primary-color);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+    }
+
+    .resource-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .resource-source {
+      font-weight: 500;
+      color: var(--text-color);
+      font-size: 13px;
+    }
+
+    .resource-score {
+      font-size: 11px;
+      color: var(--text-light);
+      background: var(--secondary-color);
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+
+    .resource-text {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text-light);
+      margin-top: 4px;
+    }
+
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.9);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .loading-content {
+      text-align: center;
+    }
+
+    .loading-dots {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      justify-content: center;
+    }
+
+    .loading-dots span {
+      width: 12px;
+      height: 12px;
+      background: var(--primary-color);
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+
+    .loading-dots span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .loading-dots span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes bounce {
+      0%, 80%, 100% {
+        transform: translateY(0);
+      }
+      40% {
+        transform: translateY(-10px);
+      }
+    }
+
+    .loading-text {
+      font-size: 16px;
+      color: var(--text-color);
+    }
+
+    .error-message {
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+      color: var(--error-color);
+    }
+
+    /* Markdown 渲染样式 */
+    .markdown-content {
+      line-height: 1.8;
+      color: var(--text-color);
+    }
+
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3,
+    .markdown-content h4,
+    .markdown-content h5,
+    .markdown-content h6 {
+      margin-top: 24px;
+      margin-bottom: 16px;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+
+    .markdown-content h1 {
+      font-size: 2em;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 0.3em;
+    }
+
+    .markdown-content h2 {
+      font-size: 1.5em;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 0.3em;
+    }
+
+    .markdown-content h3 {
+      font-size: 1.25em;
+    }
+
+    .markdown-content h4 {
+      font-size: 1em;
+    }
+
+    .markdown-content p {
+      margin-bottom: 16px;
+    }
+
+    .markdown-content ul,
+    .markdown-content ol {
+      margin-bottom: 16px;
+      padding-left: 2em;
+    }
+
+    .markdown-content li {
+      margin-bottom: 8px;
+    }
+
+    .markdown-content code {
+      background: var(--secondary-color);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: 0.9em;
+    }
+
+    .markdown-content pre {
+      background: #2d3748;
+      color: #e2e8f0;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin-bottom: 16px;
+    }
+
+    .markdown-content pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+
+    .markdown-content blockquote {
+      border-left: 4px solid var(--primary-color);
+      padding-left: 16px;
+      margin: 16px 0;
+      color: var(--text-light);
+      font-style: italic;
+    }
+
+    .markdown-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-bottom: 16px;
+    }
+
+    .markdown-content th,
+    .markdown-content td {
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      text-align: left;
+    }
+
+    .markdown-content th {
+      background: var(--secondary-color);
+      font-weight: 600;
+    }
+
+    .markdown-content hr {
+      border: none;
+      border-top: 1px solid var(--border-color);
+      margin: 24px 0;
+    }
+
+    .markdown-content a {
+      color: var(--primary-color);
+      text-decoration: none;
+    }
+
+    .markdown-content a:hover {
+      text-decoration: underline;
+    }
+
+    .markdown-content strong {
+      font-weight: 600;
+    }
+
+    .markdown-content em {
+      font-style: italic;
+    }
+
+    @media (max-width: 768px) {
+      #app {
+        padding: 16px;
+      }
+
+      .header-title {
+        font-size: 24px;
+      }
+
+      .button-group {
+        flex-direction: column;
+      }
+
+      .btn {
+        width: 100%;
+      }
+
+      .checkbox-group {
+        flex-direction: column;
+        gap: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1 class="header-title">智能教案准备</h1>
+      <p class="header-subtitle">基于知识库的教案生成工具，帮助教师快速准备课程内容</p>
+    </header>
+
+    <div class="card">
+      <h2 class="card-title">教案设置</h2>
+      
+      <div class="form-group">
+        <label for="topic-input">教案主题</label>
+        <input type="text" id="topic-input" placeholder="例如：法拉第与电磁感应" />
+      </div>
+
+      <div class="form-group">
+        <label for="template-category">模板类别</label>
+        <select id="template-category">
+          <option value="subject">学科模板</option>
+          <option value="lesson_type">课型模板</option>
+          <option value="function">功能模板</option>
+          <option value="interactive">交互模板</option>
+          <option value="personalized">个性化模板</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="template-type">具体模板</label>
+        <select id="template-type">
+          <option value="subject_physics">物理课教案</option>
+          <option value="subject_history">历史课教案</option>
+          <option value="subject_chinese">语文课教案</option>
+          <option value="subject_chemistry">化学课教案</option>
+          <option value="subject_biology">生物课教案</option>
+          <option value="subject_math">数学课教案</option>
+        </select>
+        <small style="color: var(--text-light); margin-top: 4px; display: block;" id="template-description">
+          💡 物理课教案：包含实验设计、物理模型、数学推导、物理意义和常见错误
+        </small>
+      </div>
+
+      <div class="form-group" id="grade-level-group" style="display: none;">
+        <label for="grade-level">年级</label>
+        <select id="grade-level">
+          <option value="primary">小学</option>
+          <option value="middle" selected>初中</option>
+          <option value="high">高中</option>
+          <option value="college">大学</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="learning-style-group" style="display: none;">
+        <label for="learning-style">学习风格</label>
+        <select id="learning-style">
+          <option value="visual">视觉型</option>
+          <option value="auditory">听觉型</option>
+          <option value="kinesthetic">动觉型</option>
+          <option value="read_write">读写型</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>包含内容</label>
+        <div class="checkbox-group">
+          <div class="checkbox-item">
+            <input type="checkbox" id="include-background" checked />
+            <label for="include-background">背景信息</label>
+          </div>
+          <div class="checkbox-item">
+            <input type="checkbox" id="include-facts" checked />
+            <label for="include-facts">关键常识</label>
+          </div>
+          <div class="checkbox-item">
+            <input type="checkbox" id="include-examples" checked />
+            <label for="include-examples">教学示例</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="collection-input">知识库集合</label>
+        <input type="text" id="collection-input" value="default" placeholder="collection name" />
+      </div>
+
+      <div class="form-group">
+        <label for="model-select">LLM模型</label>
+        <select id="model-select">
+          <option value="">默认模型 (coding-glm-5-free)</option>
+          <option value="gpt-4.1-free">GPT-4.1 Free</option>
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+          <option value="coding-glm-5-free">Coding GLM-5 Free</option>
+          <option value="gpt-4o">GPT-4o (付费)</option>
+          <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
+          <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
+        </select>
+        <small style="color: var(--text-light); margin-top: 4px; display: block;">
+          💡 提示：免费模型有配额限制，如果遇到限流请切换其他模型
+        </small>
+      </div>
+
+      <div class="button-group">
+        <button class="btn btn-primary" id="generate-btn">生成教案</button>
+        <button class="btn btn-secondary" id="reset-btn">重置</button>
+      </div>
+    </div>
+
+    <div class="result-section" id="result-section" style="display: none;">
+      <h2 class="card-title">教案结果</h2>
+      
+      <div class="result-card">
+        <h3 class="result-card-title">📝 教案内容</h3>
+        <div class="result-card-content markdown-content" id="lesson-content"></div>
+      </div>
+
+      <div class="resources-section">
+        <h3 class="card-title">📖 参考文档</h3>
+        <div id="resources-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading-overlay" class="loading-overlay" style="display: none;">
+    <div class="loading-content">
+      <div class="loading-dots">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="loading-text">正在生成教案，请稍候...</div>
+    </div>
+  </div>
+
+  <script>
+    const topicInput = document.getElementById('topic-input');
+    const modelSelect = document.getElementById('model-select');
+    const includeBackground = document.getElementById('include-background');
+    const includeFacts = document.getElementById('include-facts');
+    const includeExamples = document.getElementById('include-examples');
+    const collectionInput = document.getElementById('collection-input');
+    const generateBtn = document.getElementById('generate-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const resultSection = document.getElementById('result-section');
+    const lessonContent = document.getElementById('lesson-content');
+    const resourcesContent = document.getElementById('resources-content');
+    const loadingOverlay = document.getElementById('loading-overlay');
+
+    const templateCategorySelect = document.getElementById('template-category');
+    const templateTypeSelect = document.getElementById('template-type');
+    const templateDescription = document.getElementById('template-description');
+    const gradeLevelGroup = document.getElementById('grade-level-group');
+    const learningStyleGroup = document.getElementById('learning-style-group');
+
+    const templateOptions = {
+      subject: [
+        { value: 'subject_physics', text: '物理课教案', desc: '💡 物理课教案：包含实验设计、物理模型、数学推导、物理意义和常见错误' },
+        { value: 'subject_history', text: '历史课教案', desc: '💡 历史课教案：包含历史背景、关键人物、事件经过、历史意义和史料分析' },
+        { value: 'subject_chinese', text: '语文课教案', desc: '💡 语文课教案：包含作者背景、作品分析、主题思想、艺术特色和相关作品' },
+        { value: 'subject_chemistry', text: '化学课教案', desc: '💡 化学课教案：包含实验设计、反应机理、化学方程式和安全注意事项' },
+        { value: 'subject_biology', text: '生物课教案', desc: '💡 生物课教案：包含实验设计、生物概念、生命现象和生态意义' },
+        { value: 'subject_math', text: '数学课教案', desc: '💡 数学课教案：包含概念引入、定理证明、例题讲解和练习设计' },
+      ],
+      lesson_type: [
+        { value: 'lesson_new', text: '新授课', desc: '💡 新授课：导入设计、新知讲解、例题示范、练习巩固和课堂小结' },
+        { value: 'lesson_review', text: '复习课', desc: '💡 复习课：知识梳理、重点回顾、难点突破、综合应用和查漏补缺' },
+        { value: 'lesson_experiment', text: '实验课', desc: '💡 实验课：实验目的、原理、器材、步骤、数据记录和结果分析' },
+        { value: 'lesson_discussion', text: '讨论课', desc: '💡 讨论课：讨论主题、引导问题、分组建议、讨论要点和总结提升' },
+      ],
+      function: [
+        { value: 'func_exercise', text: '习题生成', desc: '💡 习题生成：基础题、中等题、提高题、拓展题和详细解析' },
+        { value: 'func_notes', text: '学习笔记', desc: '💡 学习笔记：核心概念、知识结构、重点难点、典型例题和拓展延伸' },
+        { value: 'func_summary', text: '知识点总结', desc: '💡 知识点总结：概念梳理、关系图解、对比分析、应用场景和学习建议' },
+        { value: 'func_learning_path', text: '学习路径规划', desc: '💡 学习路径：水平评估、目标设定、路径设计、资源推荐和时间规划' },
+      ],
+      interactive: [
+        { value: 'interactive_socratic', text: '苏格拉底式', desc: '💡 苏格拉底式：通过提问引导思考，不直接给出答案，培养批判性思维' },
+        { value: 'interactive_debate', text: '辩论式', desc: '💡 辩论式：提供正反观点，引导分析论证，培养辩证思维和表达能力' },
+        { value: 'interactive_project', text: '项目式学习', desc: '💡 项目式学习：项目背景、驱动性问题、任务分解、资源清单和评价标准' },
+      ],
+      personalized: [
+        { value: 'personalized_grade', text: '按年级定制', desc: '💡 年级定制：根据小学、初中、高中、大学不同年级调整内容深度和表达方式' },
+        { value: 'personalized_style', text: '按学习风格定制', desc: '💡 学习风格定制：根据视觉型、听觉型、动觉型、读写型调整内容呈现方式' },
+      ],
+    };
+
+    function updateTemplateOptions() {
+      const category = templateCategorySelect.value;
+      const options = templateOptions[category] || [];
+      
+      templateTypeSelect.innerHTML = '';
+      options.forEach((option, index) => {
+        const optElement = document.createElement('option');
+        optElement.value = option.value;
+        optElement.textContent = option.text;
+        if (index === 0) {
+          optElement.selected = true;
+          templateDescription.textContent = option.desc;
+        }
+        templateTypeSelect.appendChild(optElement);
+      });
+
+      if (category === 'personalized') {
+        const templateType = templateTypeSelect.value;
+        if (templateType === 'personalized_grade') {
+          gradeLevelGroup.style.display = 'block';
+          learningStyleGroup.style.display = 'none';
+        } else if (templateType === 'personalized_style') {
+          gradeLevelGroup.style.display = 'none';
+          learningStyleGroup.style.display = 'block';
+        } else {
+          gradeLevelGroup.style.display = 'none';
+          learningStyleGroup.style.display = 'none';
+        }
+      } else {
+        gradeLevelGroup.style.display = 'none';
+        learningStyleGroup.style.display = 'none';
+      }
+    }
+
+    templateCategorySelect.addEventListener('change', updateTemplateOptions);
+    templateTypeSelect.addEventListener('change', () => {
+      const category = templateCategorySelect.value;
+      const templateType = templateTypeSelect.value;
+      const options = templateOptions[category] || [];
+      const selectedOption = options.find(opt => opt.value === templateType);
+      if (selectedOption) {
+        templateDescription.textContent = selectedOption.desc;
+      }
+
+      if (category === 'personalized') {
+        if (templateType === 'personalized_grade') {
+          gradeLevelGroup.style.display = 'block';
+          learningStyleGroup.style.display = 'none';
+        } else if (templateType === 'personalized_style') {
+          gradeLevelGroup.style.display = 'none';
+          learningStyleGroup.style.display = 'block';
+        } else {
+          gradeLevelGroup.style.display = 'none';
+          learningStyleGroup.style.display = 'none';
+        }
+      } else {
+        gradeLevelGroup.style.display = 'none';
+        learningStyleGroup.style.display = 'none';
+      }
+    });
+
+    function showLoading(show) {
+      loadingOverlay.style.display = show ? 'flex' : 'none';
+      generateBtn.disabled = show;
+    }
+
+    function showError(message) {
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'error-message';
+      errorDiv.textContent = message;
+      
+      const card = document.querySelector('.card');
+      card.insertBefore(errorDiv, card.firstChild);
+      
+      setTimeout(() => {
+        errorDiv.remove();
+      }, 5000);
+    }
+
+    function renderResult(data) {
+      resultSection.style.display = 'block';
+
+      // 渲染教案内容（Markdown格式）
+      if (data.lesson_content) {
+        lessonContent.innerHTML = marked.parse(data.lesson_content);
+      } else {
+        lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无教案内容</p>';
+      }
+
+      // 渲染参考文档
+      if (data.additional_resources && data.additional_resources.length > 0) {
+        let resourcesHtml = '<div class="resources-list">';
+        data.additional_resources.forEach((resource, index) => {
+          resourcesHtml += `
+            <div class="resource-item">
+              <div class="resource-header">
+                <span class="resource-index">#${index + 1}</span>
+                <span class="resource-source">${resource.source}</span>
+                <span class="resource-score">相关度: ${(resource.score * 100).toFixed(1)}%</span>
+              </div>
+              <div class="resource-text">${resource.text}</div>
+            </div>
+          `;
+        });
+        resourcesHtml += '</div>';
+        resourcesContent.innerHTML = resourcesHtml;
+      } else {
+        resourcesContent.innerHTML = '<p style="color: var(--text-light); padding: 16px;">未检索到相关文档（基于LLM自身知识生成）</p>';
+      }
+    }
+
+    async function generateLessonPlan() {
+      const topic = topicInput.value.trim();
+      if (!topic) {
+        showError('请输入教案主题');
+        return;
+      }
+
+      showLoading(true);
+
+      try {
+        const templateCategory = document.getElementById('template-category').value;
+        const templateType = document.getElementById('template-type').value;
+        const gradeLevel = document.getElementById('grade-level').value;
+        const learningStyle = document.getElementById('learning-style').value;
+
+        const requestBody = {
+          topic: topic,
+          collection: collectionInput.value.trim() || 'default',
+          model: modelSelect.value || null,
+          include_background: includeBackground.checked,
+          include_facts: includeFacts.checked,
+          include_examples: includeExamples.checked,
+          template_category: templateCategory,
+          template_type: templateType,
+        };
+
+        if (templateCategory === 'personalized') {
+          if (templateType === 'personalized_grade') {
+            requestBody.grade_level = gradeLevel;
+          } else if (templateType === 'personalized_style') {
+            requestBody.learning_style = learningStyle;
+          }
+        }
+
+        const response = await fetch('/lesson-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          let errorText = `服务器错误 (${response.status})`;
+          try {
+            const data = await response.json();
+            errorText = data.error || data.detail || errorText;
+          } catch {}
+          showError(errorText);
+          return;
+        }
+
+        const data = await response.json();
+        renderResult(data);
+      } catch (error) {
+        showError(`请求失败：${error.message}`);
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    function resetForm() {
+      topicInput.value = '';
+      includeBackground.checked = true;
+      includeFacts.checked = true;
+      includeExamples.checked = true;
+      collectionInput.value = 'default';
+      resultSection.style.display = 'none';
+    }
+
+    generateBtn.addEventListener('click', generateLessonPlan);
+    resetBtn.addEventListener('click', resetForm);
+
+    // 按Enter键生成教案
+    topicInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        generateLessonPlan();
+      }
+    });
+  </script>
+</body>
+</html>
