@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import yaml
+from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
 # Repo root & path resolution
@@ -17,6 +18,11 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
 # Default absolute path to settings.yaml
 DEFAULT_SETTINGS_PATH: Path = REPO_ROOT / "config" / "settings.yaml"
+
+# Load .env file if it exists
+_env_file = REPO_ROOT / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
 
 
 def resolve_path(relative: Union[str, Path]) -> Path:

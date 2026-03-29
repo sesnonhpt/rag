@@ -15,6 +15,8 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from dataclasses import asdict, is_dataclass
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -41,6 +43,7 @@ from src.core.templates import (
     GradeLevel, 
     LearningStyle
 )
+from src.agents import LessonAgent
 from src.ingestion.storage.bm25_indexer import BM25Indexer
 from src.ingestion.storage.image_storage import ImageStorage
 from src.libs.embedding.embedding_factory import EmbeddingFactory
@@ -102,6 +105,16 @@ class LessonImageResource(BaseModel):
     caption: Optional[str] = None
 
 
+class LessonReviewReportResponse(BaseModel):
+    realism_score: int = 0
+    pedagogy_score: int = 0
+    structure_score: int = 0
+    multimodal_score: int = 0
+    strengths: List[str] = Field(default_factory=list)
+    issues: List[str] = Field(default_factory=list)
+    must_fix: List[str] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     answer: str
     citations: List[Citation] = Field(default_factory=list)
@@ -113,6 +126,7 @@ class LessonPlanResponse(BaseModel):
     lesson_content: Optional[str] = None  # 完整的教案内容（Markdown格式）
     additional_resources: List[Citation] = Field(default_factory=list)
     image_resources: List[LessonImageResource] = Field(default_factory=list)
+    review_report: Optional[LessonReviewReportResponse] = None
 
 
 class HealthResponse(BaseModel):
@@ -289,6 +303,18 @@ def _build_comprehensive_image_markdown(image_resources: List[LessonImageResourc
     return "\n".join(lines).strip()
 
 
+def _to_review_report_response(report: Any) -> Optional[LessonReviewReportResponse]:
+    if report is None:
+        return None
+    if is_dataclass(report):
+        payload = asdict(report)
+    elif isinstance(report, dict):
+        payload = report
+    else:
+        return None
+    return LessonReviewReportResponse(**payload)
+
+
 def _format_image_markdown_block(image: LessonImageResource, index: int) -> str:
     title = f"![配图{index}]({image.url})"
     caption_parts: List[str] = []
@@ -342,9 +368,38 @@ def _integrate_images_into_markdown(
         appendix = _build_comprehensive_image_markdown(remaining)
         if appendix:
             content = "\n".join(lines).rstrip()
-            return f"{content}\n\n{appendix}"
+            content = f"{content}\n\n{appendix}"
+            return _remove_dangling_image_references(content)
 
-    return "\n".join(lines)
+    return _remove_dangling_image_references("\n".join(lines))
+
+
+def _remove_dangling_image_references(content: str) -> str:
+    """Remove references like 配图4 when the corresponding image block is absent."""
+    if not content:
+        return content
+
+    referenced_indices = {int(match) for match in re.findall(r"配图(\d+)", content)}
+    rendered_indices = {
+        int(match)
+        for match in re.findall(r"!\[配图(\d+)\]", content)
+    }
+    dangling = referenced_indices - rendered_indices
+    if not dangling:
+        return content
+
+    cleaned = content
+    for index in sorted(dangling, reverse=True):
+        cleaned = re.sub(rf"[（(]?\s*见?配图{index}\s*[）)]?", "", cleaned)
+        cleaned = re.sub(rf"结合配图{index}", "结合示意内容", cleaned)
+        cleaned = re.sub(rf"参考配图{index}", "参考相关示意", cleaned)
+        cleaned = re.sub(rf"观察配图{index}", "观察相关示意", cleaned)
+        cleaned = re.sub(rf"展示配图{index}", "展示相关示意", cleaned)
+        cleaned = re.sub(rf"配图{index}", "相关示意", cleaned)
+
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def _build_prompt(question: str, contexts: List[Any]) -> List[Message]:
@@ -764,124 +819,40 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         collection=req.collection,
     )
 
-    # 5. LLM generation for lesson plan
+    # 5. Agent generation for lesson plan
     try:
         template_manager = TemplateManager()
-        
         resolved_template_type = _resolve_template_type(req)
-
-        if resolved_template_type:
-            template_type_str = resolved_template_type
-            template_type = None
-            for t in TemplateType:
-                if t.value == template_type_str:
-                    template_type = t
-                    break
-            
-            if template_type:
-                config = TemplateConfig(
-                    template_type=template_type,
-                    include_background=req.include_background,
-                    include_facts=req.include_facts,
-                    include_examples=req.include_examples,
-                )
-                
-                if req.grade_level:
-                    grade_map = {
-                        "primary": GradeLevel.PRIMARY,
-                        "middle": GradeLevel.MIDDLE,
-                        "high": GradeLevel.HIGH,
-                        "college": GradeLevel.COLLEGE,
-                    }
-                    config.grade_level = grade_map.get(req.grade_level, GradeLevel.MIDDLE)
-                
-                if req.learning_style:
-                    style_map = {
-                        "visual": LearningStyle.VISUAL,
-                        "auditory": LearningStyle.AUDITORY,
-                        "kinesthetic": LearningStyle.KINESTHETIC,
-                        "read_write": LearningStyle.READ_WRITE,
-                    }
-                    config.learning_style = style_map.get(req.learning_style, LearningStyle.VISUAL)
-                
-                messages = template_manager.build_prompt(
-                    config=config,
-                    topic=req.topic,
-                    contexts=results if results else [],
-                    retrieved_images=image_resources,
-                )
-            else:
-                if results:
-                    messages = _build_lesson_plan_prompt(
-                        topic=req.topic,
-                        contexts=results,
-                        include_background=req.include_background,
-                        include_facts=req.include_facts,
-                        include_examples=req.include_examples
-                    )
-                else:
-                    messages = _build_lesson_plan_prompt_fallback(req)
-        else:
-            if results:
-                messages = _build_lesson_plan_prompt(
-                    topic=req.topic,
-                    contexts=results,
-                    include_background=req.include_background,
-                    include_facts=req.include_facts,
-                    include_examples=req.include_examples
-                )
-            else:
-                messages = _build_lesson_plan_prompt_fallback(req)
-        import time
-        start_time = time.time()
-        llm_response = llm.chat(messages)
-        lesson_plan_content = llm_response.content
-        if resolved_template_type == "comprehensive_master" and image_resources:
-            lesson_plan_content = _integrate_images_into_markdown(
-                lesson_plan_content,
-                image_resources,
-            )
-        elapsed_ms = (time.time() - start_time) * 1000
-        trace.record_stage("llm_generation", {
-            "model": req.model or settings.llm.model,
-            "has_context": len(results) > 0,
-            "image_count": len(image_resources),
-        }, elapsed_ms=elapsed_ms)
+        agent = LessonAgent(
+            llm=llm,
+            template_manager=template_manager,
+            trace=trace,
+            request=req,
+            resolved_template_type=resolved_template_type,
+            build_default_prompt=_build_lesson_plan_prompt,
+            build_fallback_prompt=_build_lesson_plan_prompt_fallback,
+            integrate_images=_integrate_images_into_markdown,
+        )
+        agent_state = agent.run(
+            topic=req.topic,
+            results=results,
+            image_resources=image_resources,
+            citations=citations,
+        )
+        lesson_plan_content = agent_state.final_content or agent_state.draft_content or ""
+        subject = agent_state.subject
     except Exception as e:
         logger.exception("LLM generation failed for lesson plan")
         raise HTTPException(status_code=500, detail="LLM 服务异常，请稍后重试") from e
 
-    # 提取学科信息
-    subject = None
-    lines = lesson_plan_content.split('\n')
-    for line in lines[:20]:  # 在前20行中查找学科信息
-        if "学科：" in line or "学科:" in line:
-            subject = line.split("：")[-1].split(":")[-1].strip()
-            break
-        elif "物理" in line and ("教案" in line or "主题" in line):
-            subject = "物理"
-            break
-        elif "化学" in line and ("教案" in line or "主题" in line):
-            subject = "化学"
-            break
-        elif "生物" in line and ("教案" in line or "主题" in line):
-            subject = "生物"
-            break
-        elif "数学" in line and ("教案" in line or "主题" in line):
-            subject = "数学"
-            break
-        elif "语文" in line and ("教案" in line or "主题" in line):
-            subject = "语文"
-            break
-        elif "英语" in line and ("教案" in line or "主题" in line):
-            subject = "英语"
-            break
-        elif "历史" in line and ("教案" in line or "主题" in line):
-            subject = "历史"
-            break
-        elif "地理" in line and ("教案" in line or "主题" in line):
-            subject = "地理"
-            break
+    trace.record_stage("lesson_agent_complete", {
+        "model": req.model or settings.llm.model,
+        "has_context": len(results) > 0,
+        "image_count": len(image_resources),
+        "subject": subject,
+        "template_type": resolved_template_type,
+        "review_must_fix_count": len(agent_state.review_report.must_fix) if agent_state.review_report else 0,
+    })
 
     # 保存trace
     trace.finish()
@@ -894,4 +865,5 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         lesson_content=lesson_plan_content,
         additional_resources=citations,
         image_resources=image_resources,
+        review_report=_to_review_report_response(agent_state.review_report),
     )
