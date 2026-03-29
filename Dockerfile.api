@@ -1,0 +1,56 @@
+# ============================================================
+# FastAPI Web API - Dockerfile
+# ============================================================
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装系统依赖（PDF 处理）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    wkhtmltopdf \
+    fonts-noto-cjk \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libgomp1 \
+    libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 依赖
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir uv && \
+    uv pip install --system --no-cache \
+    fastapi==0.115.0 \
+    uvicorn[standard]==0.30.0 \
+    chromadb==0.5.0 \
+    qdrant-client==1.12.0 \
+    langchain-text-splitters==0.3.0 \
+    markitdown[pdf]==0.1.0 \
+    pydantic==2.9.0 \
+    pyyaml==6.0.2 \
+    openai==1.50.0 \
+    jieba==0.42.1 \
+    ragas==0.1.0 \
+    datasets==2.20.0 \
+    httpx==0.27.0 \
+    nest-asyncio==1.6.0 \
+    rank-bm25==0.2.2 \
+    cachetools==5.5.0 \
+    tenacity==9.0.0
+
+# 复制应用代码
+COPY . .
+
+# 创建数据目录（仅 Chroma 本地存储用，Qdrant 不需要）
+RUN mkdir -p /var/data/chroma /app/logs
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# 启动命令
+CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

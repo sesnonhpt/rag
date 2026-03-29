@@ -1,0 +1,71 @@
+# ============================================================
+# Modular RAG - 本地开发 docker-compose
+# ============================================================
+# 用法：
+#   cp .env.deploy.example .env
+#   # 填入 QDRANT_URL, QDRANT_API_KEY, LLM_API_KEY, EMBEDDING_API_KEY
+#   docker-compose up --build
+#
+# 访问：
+#   FastAPI:  http://localhost:8000/docs
+#   Streamlit: http://localhost:8501
+# ============================================================
+
+version: "3.9"
+
+services:
+  # ── FastAPI Web API ────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: rag-api
+    ports:
+      - "8000:8000"
+    environment:
+      # LLM
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_PROVIDER=openai
+      - LLM_BASE_URL=https://aihubmix.com/v1
+      - LLM_MODEL=coding-glm-5-free
+      # Embedding
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
+      - EMBEDDING_PROVIDER=openai
+      - EMBEDDING_BASE_URL=https://aihubmix.com/v1
+      - EMBEDDING_MODEL=qwen3-embedding-4b
+      - EMBEDDING_DIMENSIONS=2560
+      # Qdrant Cloud
+      - VECTOR_STORE_PROVIDER=qdrant
+      - QDRANT_URL=${QDRANT_URL}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-default}
+      - QDRANT_VECTOR_DIM=2560
+      # Observability
+      - OBSERVABILITY_TRACE_ENABLED=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # ── Streamlit Dashboard ─────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: rag-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_PROVIDER=openai
+      - LLM_BASE_URL=https://aihubmix.com/v1
+      - LLM_MODEL=coding-glm-5-free
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
+      - API_BASE_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
