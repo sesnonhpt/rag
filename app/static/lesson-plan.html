@@ -3,20 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>教案准备 - RAG 知识库</title>
+  <title>教学模板生成 - RAG 知识库</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     :root {
-      --primary-color: #3b82f6;
-      --primary-hover: #2563eb;
-      --secondary-color: #f3f4f6;
-      --text-color: #1f2937;
-      --text-light: #6b7280;
-      --border-color: #e5e7eb;
+      --primary-color: #0f766e;
+      --primary-hover: #115e59;
+      --secondary-color: #f3efe7;
+      --text-color: #182126;
+      --text-light: #5d6b73;
+      --border-color: rgba(24, 33, 38, 0.12);
       --error-color: #ef4444;
-      --success-color: #10b981;
-      --background: #ffffff;
-      --card-background: #f9fafb;
+      --success-color: #15803d;
+      --background: #f5f1ea;
+      --card-background: rgba(255, 252, 246, 0.9);
+      --panel-background: rgba(255, 255, 255, 0.72);
+      --shadow-soft: 0 18px 60px rgba(37, 53, 56, 0.12);
+      --shadow-card: 0 10px 30px rgba(37, 53, 56, 0.08);
+      --accent-warm: #c96f3b;
+      --accent-deep: #284b63;
     }
 
     * {
@@ -26,128 +31,210 @@
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(201, 111, 59, 0.1), transparent 24%),
+        radial-gradient(circle at 85% 10%, rgba(15, 118, 110, 0.08), transparent 22%),
+        linear-gradient(180deg, #f8f4ee 0%, #f4efe7 44%, #efe8dc 100%);
       min-height: 100vh;
       color: var(--text-color);
+      letter-spacing: 0.01em;
     }
 
     #app {
-      max-width: 1000px;
+      max-width: 1160px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 40px 24px 56px;
     }
 
     header {
-      text-align: center;
       margin-bottom: 32px;
+      position: relative;
+      overflow: hidden;
+      padding: 28px 32px;
+      border-radius: 28px;
+      background: linear-gradient(180deg, rgba(255, 252, 247, 0.96), rgba(255, 250, 244, 0.88));
+      border: 1px solid rgba(24, 33, 38, 0.08);
+      box-shadow: 0 20px 50px rgba(45, 55, 58, 0.08);
+      color: var(--text-color);
+    }
+
+    header::before {
+      content: "";
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      right: -120px;
+      top: -160px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(15, 118, 110, 0.08), transparent 68%);
+      pointer-events: none;
+    }
+
+    .hero-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(15, 118, 110, 0.06);
+      border: 1px solid rgba(15, 118, 110, 0.12);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 18px;
+      color: var(--primary-color);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.82fr);
+      gap: 22px;
+      align-items: start;
     }
 
     .header-title {
-      font-size: 28px;
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+      font-size: clamp(30px, 4vw, 42px);
       font-weight: 700;
-      color: var(--primary-color);
-      margin-bottom: 8px;
+      line-height: 1.18;
+      letter-spacing: -0.035em;
+      margin-bottom: 14px;
+      color: var(--text-color);
+      max-width: 11ch;
     }
 
     .header-subtitle {
-      font-size: 16px;
+      max-width: 640px;
+      font-size: 15px;
+      line-height: 1.8;
       color: var(--text-light);
     }
 
+    .hero-panel {
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-aside {
+      display: grid;
+      gap: 12px;
+    }
+
+    .hero-metric {
+      padding: 16px 16px 14px;
+      border-radius: 20px;
+      background: rgba(244, 248, 248, 0.92);
+      border: 1px solid rgba(24, 33, 38, 0.07);
+    }
+
+    .hero-metric-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-light);
+      margin-bottom: 8px;
+    }
+
+    .hero-metric-value {
+      font-size: 15px;
+      line-height: 1.7;
+      color: var(--text-color);
+    }
+
+    .page-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
     .card {
-      background: var(--background);
-      border-radius: 12px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-      padding: 24px;
+      background: var(--panel-background);
+      border: 1px solid rgba(255, 255, 255, 0.55);
+      border-radius: 28px;
+      box-shadow: var(--shadow-card);
+      backdrop-filter: blur(16px);
+      padding: 28px;
       margin-bottom: 24px;
     }
 
     .card-title {
-      font-size: 18px;
-      font-weight: 600;
-      margin-bottom: 16px;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Songti SC", serif;
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 18px;
       color: var(--text-color);
     }
 
+    .card-caption {
+      font-size: 14px;
+      line-height: 1.75;
+      color: var(--text-light);
+      margin-bottom: 22px;
+    }
+
     .form-group {
-      margin-bottom: 20px;
+      margin-bottom: 18px;
     }
 
     .form-group label {
       display: block;
-      font-size: 14px;
-      font-weight: 500;
-      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       color: var(--text-color);
     }
 
     .form-group input[type="text"],
     .form-group select {
       width: 100%;
-      padding: 12px 16px;
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      font-size: 14px;
-      transition: border-color 0.2s ease;
+      padding: 15px 16px;
+      border: 1px solid rgba(24, 33, 38, 0.1);
+      border-radius: 16px;
+      font-size: 15px;
+      background: rgba(255, 255, 255, 0.92);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
     }
 
     .form-group input[type="text"]:focus,
     .form-group select:focus {
       outline: none;
       border-color: var(--primary-color);
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    }
-
-    .checkbox-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      margin-top: 8px;
-    }
-
-    .checkbox-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .checkbox-item input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-    }
-
-    .checkbox-item label {
-      margin: 0;
-      font-size: 14px;
-      color: var(--text-color);
+      box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
+      transform: translateY(-1px);
     }
 
     .button-group {
       display: flex;
       gap: 12px;
-      margin-top: 24px;
+      margin-top: 26px;
     }
 
     .btn {
-      padding: 12px 24px;
+      padding: 14px 22px;
       border: none;
-      border-radius: 8px;
+      border-radius: 16px;
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 700;
+      letter-spacing: 0.02em;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.22s ease;
     }
 
     .btn-primary {
-      background: var(--primary-color);
+      background: linear-gradient(135deg, var(--primary-color), #0c8b81);
       color: white;
+      box-shadow: 0 14px 28px rgba(15, 118, 110, 0.22);
     }
 
     .btn-primary:hover {
       background: var(--primary-hover);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      transform: translateY(-2px);
+      box-shadow: 0 18px 34px rgba(15, 118, 110, 0.26);
     }
 
     .btn-primary:disabled {
@@ -158,30 +245,33 @@
     }
 
     .btn-secondary {
-      background: var(--secondary-color);
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(24, 33, 38, 0.08);
       color: var(--text-color);
     }
 
     .btn-secondary:hover {
-      background: #e5e7eb;
+      background: rgba(255, 255, 255, 0.96);
     }
 
     .result-section {
-      margin-top: 32px;
+      min-width: 0;
     }
 
     .result-card {
       background: var(--card-background);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      border-radius: 28px;
+      padding: 28px;
       margin-bottom: 16px;
+      box-shadow: var(--shadow-card);
     }
 
     .result-card-title {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 12px;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Songti SC", serif;
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 18px;
       color: var(--text-color);
       display: flex;
       align-items: center;
@@ -189,8 +279,8 @@
     }
 
     .result-card-content {
-      font-size: 14px;
-      line-height: 1.6;
+      font-size: 15px;
+      line-height: 1.85;
       color: var(--text-color);
     }
 
@@ -208,23 +298,35 @@
     }
 
     .resource-item {
-      background: white;
-      border: 1px solid var(--border-color);
-      border-left: 3px solid var(--primary-color);
-      border-radius: 0 8px 8px 0;
-      padding: 12px 16px;
-      margin-bottom: 8px;
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid rgba(24, 33, 38, 0.08);
+      border-radius: 18px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .resource-item::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: linear-gradient(180deg, var(--primary-color), var(--accent-warm));
     }
 
     .resource-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 4px;
+      gap: 12px;
+      margin-bottom: 6px;
     }
 
     .resource-source {
-      font-weight: 500;
+      font-weight: 700;
       color: var(--text-color);
       font-size: 13px;
     }
@@ -232,16 +334,16 @@
     .resource-score {
       font-size: 11px;
       color: var(--text-light);
-      background: var(--secondary-color);
-      padding: 2px 6px;
-      border-radius: 10px;
+      background: rgba(15, 118, 110, 0.08);
+      padding: 4px 8px;
+      border-radius: 999px;
     }
 
     .resource-text {
       font-size: 12px;
-      line-height: 1.4;
+      line-height: 1.6;
       color: var(--text-light);
-      margin-top: 4px;
+      margin-top: 6px;
     }
 
     .loading-overlay {
@@ -250,7 +352,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(255, 255, 255, 0.9);
+      background: rgba(248, 244, 238, 0.82);
+      backdrop-filter: blur(8px);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -260,6 +363,11 @@
 
     .loading-content {
       text-align: center;
+      padding: 26px 28px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid rgba(24, 33, 38, 0.08);
+      box-shadow: var(--shadow-card);
     }
 
     .loading-dots {
@@ -272,7 +380,7 @@
     .loading-dots span {
       width: 12px;
       height: 12px;
-      background: var(--primary-color);
+      background: linear-gradient(135deg, var(--primary-color), var(--accent-warm));
       border-radius: 50%;
       animation: bounce 1.2s infinite;
     }
@@ -300,12 +408,13 @@
     }
 
     .error-message {
-      background: #fee2e2;
-      border: 1px solid #fecaca;
-      border-radius: 8px;
+      background: #fff0ef;
+      border: 1px solid #f8c8c4;
+      border-radius: 18px;
       padding: 16px;
       margin-bottom: 24px;
       color: var(--error-color);
+      box-shadow: 0 8px 20px rgba(239, 68, 68, 0.08);
     }
 
     /* Markdown 渲染样式 */
@@ -327,19 +436,21 @@
     }
 
     .markdown-content h1 {
-      font-size: 2em;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Songti SC", serif;
+      font-size: 2.4em;
       border-bottom: 1px solid var(--border-color);
-      padding-bottom: 0.3em;
+      padding-bottom: 0.35em;
     }
 
     .markdown-content h2 {
-      font-size: 1.5em;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Songti SC", serif;
+      font-size: 1.6em;
       border-bottom: 1px solid var(--border-color);
       padding-bottom: 0.3em;
     }
 
     .markdown-content h3 {
-      font-size: 1.25em;
+      font-size: 1.28em;
     }
 
     .markdown-content h4 {
@@ -361,18 +472,18 @@
     }
 
     .markdown-content code {
-      background: var(--secondary-color);
+      background: rgba(24, 33, 38, 0.06);
       padding: 2px 6px;
-      border-radius: 3px;
+      border-radius: 8px;
       font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
       font-size: 0.9em;
     }
 
     .markdown-content pre {
-      background: #2d3748;
-      color: #e2e8f0;
-      padding: 16px;
-      border-radius: 6px;
+      background: #1f2933;
+      color: #e6edf3;
+      padding: 18px;
+      border-radius: 18px;
       overflow-x: auto;
       margin-bottom: 16px;
     }
@@ -384,11 +495,13 @@
     }
 
     .markdown-content blockquote {
-      border-left: 4px solid var(--primary-color);
-      padding-left: 16px;
+      border-left: 4px solid var(--accent-warm);
+      padding: 6px 0 6px 16px;
       margin: 16px 0;
       color: var(--text-light);
-      font-style: italic;
+      font-style: normal;
+      background: rgba(201, 111, 59, 0.05);
+      border-radius: 0 14px 14px 0;
     }
 
     .markdown-content table {
@@ -405,7 +518,7 @@
     }
 
     .markdown-content th {
-      background: var(--secondary-color);
+      background: rgba(15, 118, 110, 0.08);
       font-weight: 600;
     }
 
@@ -424,6 +537,16 @@
       text-decoration: underline;
     }
 
+    .markdown-content img {
+      display: block;
+      width: min(100%, 780px);
+      margin: 18px auto;
+      border-radius: 18px;
+      border: 1px solid rgba(24, 33, 38, 0.08);
+      box-shadow: 0 16px 36px rgba(45, 55, 58, 0.12);
+      background: #fff;
+    }
+
     .markdown-content strong {
       font-weight: 600;
     }
@@ -434,11 +557,16 @@
 
     @media (max-width: 768px) {
       #app {
-        padding: 16px;
+        padding: 18px 16px 40px;
       }
 
-      .header-title {
-        font-size: 24px;
+      header {
+        padding: 24px 20px;
+      }
+
+      .hero-grid,
+      .page-shell {
+        grid-template-columns: 1fr;
       }
 
       .button-group {
@@ -449,9 +577,9 @@
         width: 100%;
       }
 
-      .checkbox-group {
-        flex-direction: column;
-        gap: 8px;
+      .card,
+      .result-card {
+        padding: 22px;
       }
     }
   </style>
@@ -459,120 +587,81 @@
 <body>
   <div id="app">
     <header>
-      <h1 class="header-title">智能教案准备</h1>
-      <p class="header-subtitle">基于知识库的教案生成工具，帮助教师快速准备课程内容</p>
-    </header>
-
-    <div class="card">
-      <h2 class="card-title">教案设置</h2>
-      
-      <div class="form-group">
-        <label for="topic-input">教案主题</label>
-        <input type="text" id="topic-input" placeholder="例如：法拉第与电磁感应" />
-      </div>
-
-      <div class="form-group">
-        <label for="template-category">模板类别</label>
-        <select id="template-category">
-          <option value="subject">学科模板</option>
-          <option value="lesson_type">课型模板</option>
-          <option value="function">功能模板</option>
-          <option value="interactive">交互模板</option>
-          <option value="personalized">个性化模板</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label for="template-type">具体模板</label>
-        <select id="template-type">
-          <option value="subject_physics">物理课教案</option>
-          <option value="subject_history">历史课教案</option>
-          <option value="subject_chinese">语文课教案</option>
-          <option value="subject_chemistry">化学课教案</option>
-          <option value="subject_biology">生物课教案</option>
-          <option value="subject_math">数学课教案</option>
-        </select>
-        <small style="color: var(--text-light); margin-top: 4px; display: block;" id="template-description">
-          💡 物理课教案：包含实验设计、物理模型、数学推导、物理意义和常见错误
-        </small>
-      </div>
-
-      <div class="form-group" id="grade-level-group" style="display: none;">
-        <label for="grade-level">年级</label>
-        <select id="grade-level">
-          <option value="primary">小学</option>
-          <option value="middle" selected>初中</option>
-          <option value="high">高中</option>
-          <option value="college">大学</option>
-        </select>
-      </div>
-
-      <div class="form-group" id="learning-style-group" style="display: none;">
-        <label for="learning-style">学习风格</label>
-        <select id="learning-style">
-          <option value="visual">视觉型</option>
-          <option value="auditory">听觉型</option>
-          <option value="kinesthetic">动觉型</option>
-          <option value="read_write">读写型</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label>包含内容</label>
-        <div class="checkbox-group">
-          <div class="checkbox-item">
-            <input type="checkbox" id="include-background" checked />
-            <label for="include-background">背景信息</label>
+      <div class="hero-kicker">Teaching Material Builder</div>
+      <div class="hero-grid">
+        <div class="hero-panel">
+          <h1 class="header-title">把知识库整理成可直接使用的课堂材料</h1>
+          <p class="header-subtitle">支持导学案与综合模板两种模式，面向真实课堂准备，减少堆砌感，让产出更清楚、更稳、更像成稿。</p>
+        </div>
+        <div class="hero-aside">
+          <div class="hero-metric">
+            <div class="hero-metric-label">内容方向</div>
+            <div class="hero-metric-value">导学案更适合学生任务单，综合模板更适合讲练结合与课堂组织。</div>
           </div>
-          <div class="checkbox-item">
-            <input type="checkbox" id="include-facts" checked />
-            <label for="include-facts">关键常识</label>
-          </div>
-          <div class="checkbox-item">
-            <input type="checkbox" id="include-examples" checked />
-            <label for="include-examples">教学示例</label>
+          <div class="hero-metric">
+            <div class="hero-metric-label">资料依据</div>
+            <div class="hero-metric-value">优先依据知识库内容生成，并保留参考文档检索结果供回看。</div>
           </div>
         </div>
       </div>
+    </header>
 
-      <div class="form-group">
-        <label for="collection-input">知识库集合</label>
-        <input type="text" id="collection-input" value="default" placeholder="collection name" />
+    <div class="page-shell">
+      <div class="card">
+        <h2 class="card-title">模板设置</h2>
+        <p class="card-caption">保持操作简单，只保留最关键的选择项。输入主题后，系统会按所选模式生成更像正式成稿的教学内容。</p>
+
+        <div class="form-group">
+          <label for="topic-input">内容主题</label>
+          <input type="text" id="topic-input" placeholder="例如：法拉第与电磁感应" />
+        </div>
+
+        <div class="form-group">
+          <label for="template-category">模板类别</label>
+          <select id="template-category">
+            <option value="guide">导学案模板</option>
+            <option value="comprehensive">综合模板</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <small style="color: var(--text-light); display: block; line-height: 1.75;" id="template-description">
+            💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label for="model-select">LLM模型</label>
+          <select id="model-select">
+            <option value="">默认模型 (coding-glm-5-free)</option>
+            <option value="gpt-4.1-free">GPT-4.1 Free</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+            <option value="coding-glm-5-free">Coding GLM-5 Free</option>
+            <option value="gpt-4o">GPT-4o (付费)</option>
+            <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
+            <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
+          </select>
+          <small style="color: var(--text-light); margin-top: 6px; display: block; line-height: 1.7;">
+            免费模型可能有配额限制；如果生成高峰期出现限流，可以切换到其他模型。
+          </small>
+        </div>
+
+        <div class="button-group">
+          <button class="btn btn-primary" id="generate-btn">生成内容</button>
+          <button class="btn btn-secondary" id="reset-btn">重置</button>
+        </div>
       </div>
 
-      <div class="form-group">
-        <label for="model-select">LLM模型</label>
-        <select id="model-select">
-          <option value="">默认模型 (coding-glm-5-free)</option>
-          <option value="gpt-4.1-free">GPT-4.1 Free</option>
-          <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-          <option value="coding-glm-5-free">Coding GLM-5 Free</option>
-          <option value="gpt-4o">GPT-4o (付费)</option>
-          <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
-          <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
-        </select>
-        <small style="color: var(--text-light); margin-top: 4px; display: block;">
-          💡 提示：免费模型有配额限制，如果遇到限流请切换其他模型
-        </small>
-      </div>
+      <div class="result-section" id="result-section" style="display: none;">
+        <div class="result-card">
+          <h3 class="result-card-title">生成内容</h3>
+          <div class="result-card-content markdown-content" id="lesson-content"></div>
+        </div>
 
-      <div class="button-group">
-        <button class="btn btn-primary" id="generate-btn">生成教案</button>
-        <button class="btn btn-secondary" id="reset-btn">重置</button>
-      </div>
-    </div>
-
-    <div class="result-section" id="result-section" style="display: none;">
-      <h2 class="card-title">教案结果</h2>
-      
-      <div class="result-card">
-        <h3 class="result-card-title">📝 教案内容</h3>
-        <div class="result-card-content markdown-content" id="lesson-content"></div>
-      </div>
-
-      <div class="resources-section">
-        <h3 class="card-title">📖 参考文档</h3>
-        <div id="resources-content"></div>
+        <div class="result-card resources-section">
+          <h3 class="result-card-title">参考文档</h3>
+          <div id="resources-content"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -584,17 +673,13 @@
         <span></span>
         <span></span>
       </div>
-      <div class="loading-text">正在生成教案，请稍候...</div>
+      <div class="loading-text">正在生成内容，请稍候...</div>
     </div>
   </div>
 
   <script>
     const topicInput = document.getElementById('topic-input');
     const modelSelect = document.getElementById('model-select');
-    const includeBackground = document.getElementById('include-background');
-    const includeFacts = document.getElementById('include-facts');
-    const includeExamples = document.getElementById('include-examples');
-    const collectionInput = document.getElementById('collection-input');
     const generateBtn = document.getElementById('generate-btn');
     const resetBtn = document.getElementById('reset-btn');
     const resultSection = document.getElementById('result-section');
@@ -603,103 +688,19 @@
     const loadingOverlay = document.getElementById('loading-overlay');
 
     const templateCategorySelect = document.getElementById('template-category');
-    const templateTypeSelect = document.getElementById('template-type');
     const templateDescription = document.getElementById('template-description');
-    const gradeLevelGroup = document.getElementById('grade-level-group');
-    const learningStyleGroup = document.getElementById('learning-style-group');
 
-    const templateOptions = {
-      subject: [
-        { value: 'subject_physics', text: '物理课教案', desc: '💡 物理课教案：包含实验设计、物理模型、数学推导、物理意义和常见错误' },
-        { value: 'subject_history', text: '历史课教案', desc: '💡 历史课教案：包含历史背景、关键人物、事件经过、历史意义和史料分析' },
-        { value: 'subject_chinese', text: '语文课教案', desc: '💡 语文课教案：包含作者背景、作品分析、主题思想、艺术特色和相关作品' },
-        { value: 'subject_chemistry', text: '化学课教案', desc: '💡 化学课教案：包含实验设计、反应机理、化学方程式和安全注意事项' },
-        { value: 'subject_biology', text: '生物课教案', desc: '💡 生物课教案：包含实验设计、生物概念、生命现象和生态意义' },
-        { value: 'subject_math', text: '数学课教案', desc: '💡 数学课教案：包含概念引入、定理证明、例题讲解和练习设计' },
-      ],
-      lesson_type: [
-        { value: 'lesson_new', text: '新授课', desc: '💡 新授课：导入设计、新知讲解、例题示范、练习巩固和课堂小结' },
-        { value: 'lesson_review', text: '复习课', desc: '💡 复习课：知识梳理、重点回顾、难点突破、综合应用和查漏补缺' },
-        { value: 'lesson_experiment', text: '实验课', desc: '💡 实验课：实验目的、原理、器材、步骤、数据记录和结果分析' },
-        { value: 'lesson_discussion', text: '讨论课', desc: '💡 讨论课：讨论主题、引导问题、分组建议、讨论要点和总结提升' },
-      ],
-      function: [
-        { value: 'func_exercise', text: '习题生成', desc: '💡 习题生成：基础题、中等题、提高题、拓展题和详细解析' },
-        { value: 'func_notes', text: '学习笔记', desc: '💡 学习笔记：核心概念、知识结构、重点难点、典型例题和拓展延伸' },
-        { value: 'func_summary', text: '知识点总结', desc: '💡 知识点总结：概念梳理、关系图解、对比分析、应用场景和学习建议' },
-        { value: 'func_learning_path', text: '学习路径规划', desc: '💡 学习路径：水平评估、目标设定、路径设计、资源推荐和时间规划' },
-      ],
-      interactive: [
-        { value: 'interactive_socratic', text: '苏格拉底式', desc: '💡 苏格拉底式：通过提问引导思考，不直接给出答案，培养批判性思维' },
-        { value: 'interactive_debate', text: '辩论式', desc: '💡 辩论式：提供正反观点，引导分析论证，培养辩证思维和表达能力' },
-        { value: 'interactive_project', text: '项目式学习', desc: '💡 项目式学习：项目背景、驱动性问题、任务分解、资源清单和评价标准' },
-      ],
-      personalized: [
-        { value: 'personalized_grade', text: '按年级定制', desc: '💡 年级定制：根据小学、初中、高中、大学不同年级调整内容深度和表达方式' },
-        { value: 'personalized_style', text: '按学习风格定制', desc: '💡 学习风格定制：根据视觉型、听觉型、动觉型、读写型调整内容呈现方式' },
-      ],
+    const templateDescriptions = {
+      guide: '💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿',
+      comprehensive: '💡 综合模板：融合导学案、讲练结合、互动设计和分层任务，生成固定结构成稿',
     };
 
-    function updateTemplateOptions() {
+    function updateTemplateDescription() {
       const category = templateCategorySelect.value;
-      const options = templateOptions[category] || [];
-      
-      templateTypeSelect.innerHTML = '';
-      options.forEach((option, index) => {
-        const optElement = document.createElement('option');
-        optElement.value = option.value;
-        optElement.textContent = option.text;
-        if (index === 0) {
-          optElement.selected = true;
-          templateDescription.textContent = option.desc;
-        }
-        templateTypeSelect.appendChild(optElement);
-      });
-
-      if (category === 'personalized') {
-        const templateType = templateTypeSelect.value;
-        if (templateType === 'personalized_grade') {
-          gradeLevelGroup.style.display = 'block';
-          learningStyleGroup.style.display = 'none';
-        } else if (templateType === 'personalized_style') {
-          gradeLevelGroup.style.display = 'none';
-          learningStyleGroup.style.display = 'block';
-        } else {
-          gradeLevelGroup.style.display = 'none';
-          learningStyleGroup.style.display = 'none';
-        }
-      } else {
-        gradeLevelGroup.style.display = 'none';
-        learningStyleGroup.style.display = 'none';
-      }
+      templateDescription.textContent = templateDescriptions[category] || '';
     }
 
-    templateCategorySelect.addEventListener('change', updateTemplateOptions);
-    templateTypeSelect.addEventListener('change', () => {
-      const category = templateCategorySelect.value;
-      const templateType = templateTypeSelect.value;
-      const options = templateOptions[category] || [];
-      const selectedOption = options.find(opt => opt.value === templateType);
-      if (selectedOption) {
-        templateDescription.textContent = selectedOption.desc;
-      }
-
-      if (category === 'personalized') {
-        if (templateType === 'personalized_grade') {
-          gradeLevelGroup.style.display = 'block';
-          learningStyleGroup.style.display = 'none';
-        } else if (templateType === 'personalized_style') {
-          gradeLevelGroup.style.display = 'none';
-          learningStyleGroup.style.display = 'block';
-        } else {
-          gradeLevelGroup.style.display = 'none';
-          learningStyleGroup.style.display = 'none';
-        }
-      } else {
-        gradeLevelGroup.style.display = 'none';
-        learningStyleGroup.style.display = 'none';
-      }
-    });
+    templateCategorySelect.addEventListener('change', updateTemplateDescription);
 
     function showLoading(show) {
       loadingOverlay.style.display = show ? 'flex' : 'none';
@@ -722,11 +723,11 @@
     function renderResult(data) {
       resultSection.style.display = 'block';
 
-      // 渲染教案内容（Markdown格式）
+      // 渲染生成内容（Markdown格式）
       if (data.lesson_content) {
         lessonContent.innerHTML = marked.parse(data.lesson_content);
       } else {
-        lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无教案内容</p>';
+        lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无生成内容</p>';
       }
 
       // 渲染参考文档
@@ -754,7 +755,7 @@
     async function generateLessonPlan() {
       const topic = topicInput.value.trim();
       if (!topic) {
-        showError('请输入教案主题');
+        showError('请输入内容主题');
         return;
       }
 
@@ -762,28 +763,13 @@
 
       try {
         const templateCategory = document.getElementById('template-category').value;
-        const templateType = document.getElementById('template-type').value;
-        const gradeLevel = document.getElementById('grade-level').value;
-        const learningStyle = document.getElementById('learning-style').value;
 
         const requestBody = {
           topic: topic,
-          collection: collectionInput.value.trim() || 'default',
+          collection: 'default',
           model: modelSelect.value || null,
-          include_background: includeBackground.checked,
-          include_facts: includeFacts.checked,
-          include_examples: includeExamples.checked,
           template_category: templateCategory,
-          template_type: templateType,
         };
-
-        if (templateCategory === 'personalized') {
-          if (templateType === 'personalized_grade') {
-            requestBody.grade_level = gradeLevel;
-          } else if (templateType === 'personalized_style') {
-            requestBody.learning_style = learningStyle;
-          }
-        }
 
         const response = await fetch('/lesson-plan', {
           method: 'POST',
@@ -812,22 +798,20 @@
 
     function resetForm() {
       topicInput.value = '';
-      includeBackground.checked = true;
-      includeFacts.checked = true;
-      includeExamples.checked = true;
-      collectionInput.value = 'default';
       resultSection.style.display = 'none';
     }
 
     generateBtn.addEventListener('click', generateLessonPlan);
     resetBtn.addEventListener('click', resetForm);
 
-    // 按Enter键生成教案
+    // 按Enter键生成内容
     topicInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         generateLessonPlan();
       }
     });
+
+    updateTemplateDescription();
   </script>
 </body>
 </html>

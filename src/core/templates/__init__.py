@@ -32,6 +32,21 @@ class TemplateType(Enum):
     SUBJECT_MATH = "subject_math"
     SUBJECT_ENGLISH = "subject_english"
     SUBJECT_GEOGRAPHY = "subject_geography"
+
+    # Guide Templates
+    GUIDE_MATH = "guide_math"
+    GUIDE_PHYSICS = "guide_physics"
+    GUIDE_CHEMISTRY = "guide_chemistry"
+    GUIDE_BIOLOGY = "guide_biology"
+    GUIDE_HISTORY = "guide_history"
+    GUIDE_GEOGRAPHY = "guide_geography"
+    GUIDE_CHINESE = "guide_chinese"
+    GUIDE_ENGLISH = "guide_english"
+    GUIDE_POLITICS = "guide_politics"
+    GUIDE_MASTER = "guide_master"
+
+    # Comprehensive Template
+    COMPREHENSIVE_MASTER = "comprehensive_master"
     
     # Lesson Type Templates
     LESSON_NEW = "lesson_new"
@@ -114,6 +129,19 @@ class TemplateManager:
             build_experiment_lesson_prompt,
             build_discussion_lesson_prompt,
         )
+        from .guide_templates import (
+            build_guide_master_prompt,
+            build_math_guide_prompt,
+            build_physics_guide_prompt,
+            build_chemistry_guide_prompt,
+            build_biology_guide_prompt,
+            build_history_guide_prompt,
+            build_geography_guide_prompt,
+            build_chinese_guide_prompt,
+            build_english_guide_prompt,
+            build_politics_guide_prompt,
+        )
+        from .comprehensive_templates import build_comprehensive_master_prompt
         from .function_templates import (
             build_exercise_prompt,
             build_notes_prompt,
@@ -142,6 +170,21 @@ class TemplateManager:
         self.templates[TemplateType.SUBJECT_CHEMISTRY] = build_chemistry_lesson_prompt
         self.templates[TemplateType.SUBJECT_BIOLOGY] = build_biology_lesson_prompt
         self.templates[TemplateType.SUBJECT_MATH] = build_math_lesson_prompt
+
+        # Guide Templates
+        self.templates[TemplateType.GUIDE_MASTER] = build_guide_master_prompt
+        self.templates[TemplateType.GUIDE_MATH] = build_math_guide_prompt
+        self.templates[TemplateType.GUIDE_PHYSICS] = build_physics_guide_prompt
+        self.templates[TemplateType.GUIDE_CHEMISTRY] = build_chemistry_guide_prompt
+        self.templates[TemplateType.GUIDE_BIOLOGY] = build_biology_guide_prompt
+        self.templates[TemplateType.GUIDE_HISTORY] = build_history_guide_prompt
+        self.templates[TemplateType.GUIDE_GEOGRAPHY] = build_geography_guide_prompt
+        self.templates[TemplateType.GUIDE_CHINESE] = build_chinese_guide_prompt
+        self.templates[TemplateType.GUIDE_ENGLISH] = build_english_guide_prompt
+        self.templates[TemplateType.GUIDE_POLITICS] = build_politics_guide_prompt
+
+        # Comprehensive Template
+        self.templates[TemplateType.COMPREHENSIVE_MASTER] = build_comprehensive_master_prompt
         
         # Lesson Type Templates
         self.templates[TemplateType.LESSON_NEW] = build_new_lesson_prompt
@@ -213,6 +256,12 @@ class TemplateManager:
                 "生物课",
                 "数学课",
             ],
+            "导学案模板": [
+                "标准导学案",
+            ],
+            "综合模板": [
+                "综合教学模板",
+            ],
             "课型模板": [
                 "新授课",
                 "复习课",
@@ -258,6 +307,21 @@ class TemplateManager:
             TemplateType.SUBJECT_CHEMISTRY: "化学课教案：包含实验设计、反应机理、化学方程式和安全注意事项",
             TemplateType.SUBJECT_BIOLOGY: "生物课教案：包含实验设计、生物概念、生命现象和生态意义",
             TemplateType.SUBJECT_MATH: "数学课教案：包含概念引入、定理证明、例题讲解和练习设计",
+
+            # Guide Templates
+            TemplateType.GUIDE_MASTER: "标准导学案：自动判断学科并按学校导学案体例生成完整成稿",
+            TemplateType.GUIDE_MATH: "数学导学案：对齐学校导学案体例，包含学习目标、基础部分、要点部分、拓展部分和目标检测",
+            TemplateType.GUIDE_PHYSICS: "物理导学案：突出规律分析、实验情境、典型例题、拓展训练和课堂检测",
+            TemplateType.GUIDE_CHEMISTRY: "化学导学案：突出概念辨析、实验现象、性质判断、拓展应用和当堂检测",
+            TemplateType.GUIDE_BIOLOGY: "生物导学案：突出概念理解、生命现象分析、探究任务和分层练习",
+            TemplateType.GUIDE_HISTORY: "历史导学案：突出史实梳理、材料分析、历史意义、拓展思考和目标检测",
+            TemplateType.GUIDE_GEOGRAPHY: "地理导学案：突出读图分析、区域特征、综合应用和课堂检测",
+            TemplateType.GUIDE_CHINESE: "语文导学案：突出字词积累、文本赏析、主旨理解、拓展阅读和目标检测",
+            TemplateType.GUIDE_ENGLISH: "英语导学案：突出词汇短语、language points、阅读任务和检测练习",
+            TemplateType.GUIDE_POLITICS: "政治导学案：突出观点提炼、材料分析、现实联系和分层检测",
+
+            # Comprehensive Template
+            TemplateType.COMPREHENSIVE_MASTER: "综合教学模板：融合学科、导学案、课型、练习、互动和分层设计等优势，兼顾备课与课堂使用",
             
             # Lesson Type Templates
             TemplateType.LESSON_NEW: "新授课：导入设计、新知讲解、例题示范、练习巩固和课堂小结",

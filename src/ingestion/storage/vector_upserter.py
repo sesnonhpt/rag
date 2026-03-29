@@ -15,6 +15,7 @@ Design Principles:
 """
 
 import hashlib
+import uuid
 from typing import List, Dict, Any, Optional
 
 from src.core.types import Chunk
@@ -162,8 +163,10 @@ class VectorUpserter:
         source_hash = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:8]
         content_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()[:8]
         
-        # Format: {source_hash}_{index:04d}_{content_hash}
-        chunk_id = f"{source_hash}_{chunk_index:04d}_{content_hash}"
+        # Generate deterministic UUID5 from combined hash
+        # Qdrant requires point IDs to be UUID or unsigned integer
+        combined_hash = f"{source_hash}_{chunk_index:04d}_{content_hash}"
+        chunk_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, combined_hash))
         
         return chunk_id
     

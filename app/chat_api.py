@@ -15,11 +15,11 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,7 @@ from src.core.templates import (
     LearningStyle
 )
 from src.ingestion.storage.bm25_indexer import BM25Indexer
+from src.ingestion.storage.image_storage import ImageStorage
 from src.libs.embedding.embedding_factory import EmbeddingFactory
 from src.libs.llm.base_llm import Message
 from src.libs.llm.llm_factory import LLMFactory
@@ -77,10 +78,28 @@ class LessonPlanRequest(BaseModel):
     learning_style: Optional[str] = Field(default=None, description="学习风格（个性化模板使用）")
 
 
+def _resolve_template_type(req: "LessonPlanRequest") -> Optional[str]:
+    if req.template_type:
+        return req.template_type
+    if req.template_category == "guide":
+        return "guide_master"
+    if req.template_category == "comprehensive":
+        return "comprehensive_master"
+    return None
+
+
 class Citation(BaseModel):
     source: str
     score: float
     text: str
+
+
+class LessonImageResource(BaseModel):
+    image_id: str
+    url: str
+    source: str
+    page: Optional[int] = None
+    caption: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -93,6 +112,7 @@ class LessonPlanResponse(BaseModel):
     subject: Optional[str] = None
     lesson_content: Optional[str] = None  # 完整的教案内容（Markdown格式）
     additional_resources: List[Citation] = Field(default_factory=list)
+    image_resources: List[LessonImageResource] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
@@ -129,6 +149,202 @@ def _build_components(settings: Any, collection: str) -> tuple:
     )
     reranker = create_core_reranker(settings=settings)
     return hybrid_search, reranker
+
+
+def _extract_caption_lookup(metadata: Dict[str, Any]) -> Dict[str, str]:
+    captions = metadata.get("image_captions", {})
+    if isinstance(captions, dict):
+        return {str(k): str(v) for k, v in captions.items()}
+    if isinstance(captions, list):
+        lookup: Dict[str, str] = {}
+        for item in captions:
+            if isinstance(item, dict) and item.get("id") and item.get("caption"):
+                lookup[str(item["id"])] = str(item["caption"])
+        return lookup
+    return {}
+
+
+def _extract_image_resources(
+    results: List[Any],
+    image_storage: Optional[ImageStorage] = None,
+    collection: Optional[str] = None,
+    max_images: int = 6,
+) -> List[LessonImageResource]:
+    seen_ids = set()
+    image_resources: List[LessonImageResource] = []
+    doc_hashes = []
+
+    for result in results:
+        metadata = result.metadata or {}
+        images = metadata.get("images", [])
+        doc_hash = metadata.get("doc_hash")
+        if doc_hash and doc_hash not in doc_hashes:
+            doc_hashes.append(doc_hash)
+        if not isinstance(images, list):
+            continue
+
+        caption_lookup = _extract_caption_lookup(metadata)
+        source_path = metadata.get("source_path", "unknown")
+
+        for image_info in images:
+            if not isinstance(image_info, dict):
+                continue
+
+            image_id = image_info.get("id")
+            image_path = image_info.get("path")
+            if not image_id or not image_path or image_id in seen_ids:
+                continue
+
+            path_obj = Path(image_path)
+            if not path_obj.is_absolute():
+                path_obj = (_ROOT / image_path).resolve()
+
+            if not path_obj.exists():
+                continue
+
+            seen_ids.add(image_id)
+            image_resources.append(
+                LessonImageResource(
+                    image_id=str(image_id),
+                    url=f"/lesson-plan-image/{image_id}",
+                    source=str(source_path),
+                    page=image_info.get("page") or metadata.get("page_num"),
+                    caption=caption_lookup.get(str(image_id)),
+                )
+            )
+
+            if len(image_resources) >= max_images:
+                return image_resources
+
+    if len(image_resources) >= max_images or image_storage is None:
+        return image_resources
+
+    # Fallback: some retrieved chunks don't carry image metadata after splitting/rerank.
+    # Try to recover original PDF images by doc_hash from persistent image index.
+    for doc_hash in doc_hashes:
+        try:
+            indexed_images = image_storage.list_images(
+                collection=collection,
+                doc_hash=doc_hash,
+            )
+        except Exception:
+            indexed_images = []
+
+        for indexed in indexed_images:
+            image_id = indexed.get("image_id")
+            file_path = indexed.get("file_path")
+            if not image_id or not file_path or image_id in seen_ids:
+                continue
+
+            path_obj = Path(file_path)
+            if not path_obj.exists():
+                continue
+
+            seen_ids.add(image_id)
+            image_resources.append(
+                LessonImageResource(
+                    image_id=str(image_id),
+                    url=f"/lesson-plan-image/{image_id}",
+                    source=str(path_obj),
+                    page=indexed.get("page_num"),
+                    caption=None,
+                )
+            )
+            if len(image_resources) >= max_images:
+                return image_resources
+
+    return image_resources
+
+
+def _build_comprehensive_image_markdown(image_resources: List[LessonImageResource]) -> str:
+    if not image_resources:
+        return ""
+
+    lines = [
+        "## 图文讲解素材",
+        "以下配图来自检索到的 PDF 原始资料，可直接用于课堂讲解与投屏展示。",
+        "",
+    ]
+
+    for index, image in enumerate(image_resources, start=1):
+        title = f"### 配图{index}"
+        if image.page:
+            title += f"（第 {image.page} 页）"
+        lines.append(title)
+        lines.append(f"![配图{index}]({image.url})")
+
+        caption_parts: List[str] = []
+        if image.caption:
+            caption_parts.append(image.caption.strip())
+        if image.source:
+            source_text = Path(image.source).name
+            if image.page:
+                source_text += f" · 第 {image.page} 页"
+            caption_parts.append(f"来源：{source_text}")
+        if caption_parts:
+            lines.append("")
+            lines.append("> " + " | ".join(caption_parts))
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _format_image_markdown_block(image: LessonImageResource, index: int) -> str:
+    title = f"![配图{index}]({image.url})"
+    caption_parts: List[str] = []
+    if image.caption:
+        caption_parts.append(image.caption.strip())
+    if image.source:
+        source_text = Path(image.source).name
+        if image.page:
+            source_text += f" · 第 {image.page} 页"
+        caption_parts.append(f"来源：{source_text}")
+    if caption_parts:
+        return f"{title}\n\n> " + " | ".join(caption_parts)
+    return title
+
+
+def _integrate_images_into_markdown(
+    lesson_plan_content: str,
+    image_resources: List[LessonImageResource],
+) -> str:
+    """Insert retrieved images near the first textual mention of 配图N.
+
+    Falls back to an appendix block for images not explicitly referenced by the LLM.
+    """
+    if not lesson_plan_content or not image_resources:
+        return lesson_plan_content
+
+    lines = lesson_plan_content.splitlines()
+    inserted_indices = set()
+
+    for index, image in enumerate(image_resources, start=1):
+        marker = f"配图{index}"
+        insertion_block = _format_image_markdown_block(image, index).splitlines()
+
+        for line_idx, line in enumerate(lines):
+            if marker in line:
+                insert_at = line_idx + 1
+                if insert_at < len(lines) and lines[insert_at].strip().startswith("![配图"):
+                    inserted_indices.add(index)
+                    break
+
+                block = [""] + insertion_block + [""]
+                lines[insert_at:insert_at] = block
+                inserted_indices.add(index)
+                break
+
+    remaining = [
+        image for idx, image in enumerate(image_resources, start=1)
+        if idx not in inserted_indices
+    ]
+    if remaining:
+        appendix = _build_comprehensive_image_markdown(remaining)
+        if appendix:
+            content = "\n".join(lines).rstrip()
+            return f"{content}\n\n{appendix}"
+
+    return "\n".join(lines)
 
 
 def _build_prompt(question: str, contexts: List[Any]) -> List[Message]:
@@ -217,7 +433,8 @@ def _build_lesson_plan_prompt(topic: str, contexts: List[Any], include_backgroun
             role="system",
             content=(
                 f"你是一名经验丰富的教师，擅长准备详细、深入的教案。请基于以下上下文内容，为主题'{topic}'生成一份详细的教案。\n"
-                "请严格基于提供的上下文内容，不要凭空捏造信息。如果上下文中没有足够信息，请明确说明。\n"
+                "请以上下文内容为主要依据，同时允许结合通用学科知识、课堂经验和教学设计方法做合理拓展。\n"
+                "不要伪造具体出处、页码或事实来源；如果上下文不足，可补充教学性内容，但请避免编造可核验细节。\n"
                 "首先，请根据主题内容推断这属于哪个学科（如物理、化学、生物、数学、语文、英语、历史、地理等），并在教案开头明确指出。\n\n"
                 "请按照以下结构组织教案：\n\n"
                 f"{instructions_text}\n\n"
@@ -264,8 +481,7 @@ def _build_lesson_plan_prompt_fallback(req: "LessonPlanRequest") -> List[Message
             role="system",
             content=(
                 f"你是一名经验丰富的教师，擅长准备详细、深入的教案。当前知识库中没有找到与主题'{req.topic}'相关的内容，\n"
-                "请基于你自己的知识为该主题生成一份详细的教案。请明确告知用户你是基于自身知识生成的，\n"
-                "而不是基于知识库内容。\n\n"
+                "请基于你自己的知识与教学经验为该主题生成一份详细的教案，并主动补充更有教学价值的延伸内容。\n\n"
                 "首先，请根据主题内容推断这属于哪个学科（如物理、化学、生物、数学、语文、英语、历史、地理等），并在教案开头明确指出。\n\n"
                 "请按照以下结构组织教案：\n\n"
                 f"{instructions_text}\n\n"
@@ -292,16 +508,22 @@ async def lifespan(app: FastAPI):
     collection = settings.vector_store.collection_name
     hybrid_search, reranker = _build_components(settings, collection)
     llm = LLMFactory.create(settings)
+    image_storage = ImageStorage(
+        db_path=str(_ROOT / "data" / "db" / "image_index.db"),
+        images_root=str(_ROOT / "data" / "images"),
+    )
 
     app.state.settings = settings
     app.state.hybrid_search = hybrid_search
     app.state.reranker = reranker
     app.state.llm = llm
+    app.state.image_storage = image_storage
     app.state.default_collection = collection
 
     logger.info("Chat API components initialised successfully")
     yield
     logger.info("Chat API shutting down")
+    image_storage.close()
 
 
 app = FastAPI(title="RAG Chat API", lifespan=lifespan)
@@ -357,6 +579,20 @@ async def serve_lesson_plan_ui():
     if not html_file.exists():
         raise HTTPException(status_code=404, detail="Lesson Plan UI file not found")
     return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
+
+
+@app.get("/lesson-plan-image/{image_id}")
+async def serve_lesson_plan_image(image_id: str, request: Request):
+    image_storage = request.app.state.image_storage
+    image_path = image_storage.get_image_path(image_id)
+    if not image_path:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    path = Path(image_path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Image file not found")
+
+    return FileResponse(path)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -522,13 +758,20 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         )
         for r in results
     ]
+    image_resources = _extract_image_resources(
+        results,
+        image_storage=request.app.state.image_storage,
+        collection=req.collection,
+    )
 
     # 5. LLM generation for lesson plan
     try:
         template_manager = TemplateManager()
         
-        if req.template_type:
-            template_type_str = req.template_type
+        resolved_template_type = _resolve_template_type(req)
+
+        if resolved_template_type:
+            template_type_str = resolved_template_type
             template_type = None
             for t in TemplateType:
                 if t.value == template_type_str:
@@ -565,6 +808,7 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
                     config=config,
                     topic=req.topic,
                     contexts=results if results else [],
+                    retrieved_images=image_resources,
                 )
             else:
                 if results:
@@ -592,10 +836,16 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         start_time = time.time()
         llm_response = llm.chat(messages)
         lesson_plan_content = llm_response.content
+        if resolved_template_type == "comprehensive_master" and image_resources:
+            lesson_plan_content = _integrate_images_into_markdown(
+                lesson_plan_content,
+                image_resources,
+            )
         elapsed_ms = (time.time() - start_time) * 1000
         trace.record_stage("llm_generation", {
             "model": req.model or settings.llm.model,
             "has_context": len(results) > 0,
+            "image_count": len(image_resources),
         }, elapsed_ms=elapsed_ms)
     except Exception as e:
         logger.exception("LLM generation failed for lesson plan")
@@ -642,5 +892,6 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         topic=req.topic,
         subject=subject,
         lesson_content=lesson_plan_content,
-        additional_resources=citations
+        additional_resources=citations,
+        image_resources=image_resources,
     )
