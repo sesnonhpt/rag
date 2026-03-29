@@ -99,10 +99,12 @@ class QdrantStore(BaseVectorStore):
         )
 
         # Initialize Qdrant client
+        # Note: Qdrant Cloud uses api-key header (not Authorization: Bearer)
         self._client = QdrantClient(
             url=self.qdrant_url,
             api_key=self.qdrant_api_key,
             timeout=30,
+            headers={"api-key": self.qdrant_api_key} if self.qdrant_api_key else {},
         )
 
         # Ensure collection exists (create if missing)
