@@ -87,10 +87,10 @@ services:
       - key: PYTHON_VERSION
         value: "3.11"
 
-      # API 地址：通过 Render 内部网络连接 rag-api
-      # RENDER_EXTERNAL_URL 由 Render 自动注入，指向 rag-api 公网地址
+      # API 地址：引用 rag-api 的 RENDER_EXTERNAL_URL
       - key: API_BASE_URL
         fromService:
+          type: web
           name: rag-api
           envVarKey: RENDER_EXTERNAL_URL
           default: "http://localhost:8000"
