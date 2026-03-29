@@ -100,6 +100,10 @@ def _apply_env_overrides(data: Dict[str, Any]) -> Dict[str, Any]:
             "provider": "VECTOR_STORE_PROVIDER",
             "persist_directory": "VECTOR_STORE_PERSIST_DIRECTORY",
             "collection_name": "VECTOR_STORE_COLLECTION_NAME",
+            "qdrant_url": "QDRANT_URL",
+            "qdrant_api_key": "QDRANT_API_KEY",
+            "qdrant_collection_name": "QDRANT_COLLECTION_NAME",
+            "qdrant_vector_dim": "QDRANT_VECTOR_DIM",
         },
         "retrieval": {
             "dense_top_k": "RETRIEVAL_DENSE_TOP_K",
@@ -215,6 +219,11 @@ class VectorStoreSettings:
     provider: str
     persist_directory: str
     collection_name: str
+    # Qdrant Cloud config (used when provider == "qdrant")
+    qdrant_url: Optional[str] = None
+    qdrant_api_key: Optional[str] = None
+    qdrant_collection_name: Optional[str] = None
+    qdrant_vector_dim: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -349,6 +358,10 @@ class Settings:
                 provider=_require_str(vector_store, "provider", "vector_store"),
                 persist_directory=_require_str(vector_store, "persist_directory", "vector_store"),
                 collection_name=_require_str(vector_store, "collection_name", "vector_store"),
+                qdrant_url=vector_store.get("qdrant_url"),
+                qdrant_api_key=vector_store.get("qdrant_api_key"),
+                qdrant_collection_name=vector_store.get("qdrant_collection_name"),
+                qdrant_vector_dim=vector_store.get("qdrant_vector_dim"),
             ),
             retrieval=RetrievalSettings(
                 dense_top_k=_require_int(retrieval, "dense_top_k", "retrieval"),
