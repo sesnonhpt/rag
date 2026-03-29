@@ -5,13 +5,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装系统依赖（PDF 处理）
+# 安装系统依赖（PDF 处理；wkhtmltopdf/libgl1-mesa-glx 在 Debian Trixie 已移除）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    wkhtmltopdf \
     fonts-noto-cjk \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libgomp1 \
     libfontconfig1 \
