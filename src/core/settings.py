@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -35,6 +36,99 @@ def resolve_path(relative: Union[str, Path]) -> Path:
 
 class SettingsError(ValueError):
     """Raised when settings validation fails."""
+
+
+def _parse_env_value(raw: str, current: Any) -> Any:
+    """Parse a string env override using the current config value as a type hint."""
+    if isinstance(current, bool):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(current, int) and not isinstance(current, bool):
+        return int(raw)
+    if isinstance(current, float):
+        return float(raw)
+    return raw
+
+
+def _set_if_env(data: Dict[str, Any], key: str, env_name: str) -> None:
+    """Override a config key from an environment variable when present."""
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return
+    current = data.get(key)
+    data[key] = _parse_env_value(raw, current)
+
+
+def _apply_env_overrides(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply environment-variable overrides to loaded YAML settings."""
+    if not isinstance(data, dict):
+        return data
+
+    sections: Dict[str, Dict[str, str]] = {
+        "llm": {
+            "provider": "LLM_PROVIDER",
+            "model": "LLM_MODEL",
+            "api_key": "LLM_API_KEY",
+            "api_version": "LLM_API_VERSION",
+            "azure_endpoint": "LLM_AZURE_ENDPOINT",
+            "deployment_name": "LLM_DEPLOYMENT_NAME",
+            "base_url": "LLM_BASE_URL",
+            "temperature": "LLM_TEMPERATURE",
+            "max_tokens": "LLM_MAX_TOKENS",
+        },
+        "embedding": {
+            "provider": "EMBEDDING_PROVIDER",
+            "model": "EMBEDDING_MODEL",
+            "api_key": "EMBEDDING_API_KEY",
+            "api_version": "EMBEDDING_API_VERSION",
+            "azure_endpoint": "EMBEDDING_AZURE_ENDPOINT",
+            "deployment_name": "EMBEDDING_DEPLOYMENT_NAME",
+            "base_url": "EMBEDDING_BASE_URL",
+            "dimensions": "EMBEDDING_DIMENSIONS",
+        },
+        "vision_llm": {
+            "enabled": "VISION_LLM_ENABLED",
+            "provider": "VISION_LLM_PROVIDER",
+            "model": "VISION_LLM_MODEL",
+            "api_key": "VISION_LLM_API_KEY",
+            "api_version": "VISION_LLM_API_VERSION",
+            "azure_endpoint": "VISION_LLM_AZURE_ENDPOINT",
+            "deployment_name": "VISION_LLM_DEPLOYMENT_NAME",
+            "base_url": "VISION_LLM_BASE_URL",
+            "max_image_size": "VISION_LLM_MAX_IMAGE_SIZE",
+        },
+        "vector_store": {
+            "provider": "VECTOR_STORE_PROVIDER",
+            "persist_directory": "VECTOR_STORE_PERSIST_DIRECTORY",
+            "collection_name": "VECTOR_STORE_COLLECTION_NAME",
+        },
+        "retrieval": {
+            "dense_top_k": "RETRIEVAL_DENSE_TOP_K",
+            "sparse_top_k": "RETRIEVAL_SPARSE_TOP_K",
+            "fusion_top_k": "RETRIEVAL_FUSION_TOP_K",
+            "rrf_k": "RETRIEVAL_RRF_K",
+        },
+        "rerank": {
+            "enabled": "RERANK_ENABLED",
+            "provider": "RERANK_PROVIDER",
+            "model": "RERANK_MODEL",
+            "top_k": "RERANK_TOP_K",
+        },
+        "observability": {
+            "log_level": "OBSERVABILITY_LOG_LEVEL",
+            "trace_enabled": "OBSERVABILITY_TRACE_ENABLED",
+            "trace_file": "OBSERVABILITY_TRACE_FILE",
+            "structured_logging": "OBSERVABILITY_STRUCTURED_LOGGING",
+        },
+    }
+
+    for section_name, key_map in sections.items():
+        section = data.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for key, env_name in key_map.items():
+            _set_if_env(section, key, env_name)
+
+    return data
 
 
 def _require_mapping(data: Dict[str, Any], key: str, path: str) -> Dict[str, Any]:
@@ -321,6 +415,6 @@ def load_settings(path: str | Path | None = None) -> Settings:
     with settings_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
 
-    settings = Settings.from_dict(data or {})
+    settings = Settings.from_dict(_apply_env_overrides(data or {}))
     validate_settings(settings)
     return settings
