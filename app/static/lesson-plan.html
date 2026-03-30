@@ -590,7 +590,7 @@
       <div class="hero-kicker">Teaching Material Builder</div>
       <div class="hero-grid">
         <div class="hero-panel">
-          <h1 class="header-title">把知识库整理成可直接使用的课堂材料</h1>
+          <h1 class="header-title">智能教案</h1>
           <p class="header-subtitle">支持导学案与综合模板两种模式，面向真实课堂准备，减少堆砌感，让产出更清楚、更稳、更像成稿。</p>
         </div>
         <div class="hero-aside">
@@ -609,7 +609,7 @@
     <div class="page-shell">
       <div class="card">
         <h2 class="card-title">模板设置</h2>
-        <p class="card-caption">保持操作简单，只保留最关键的选择项。输入主题后，系统会按所选模式生成更像正式成稿的教学内容。</p>
+        <!-- <p class="card-caption">保持操作简单，只保留最关键的选择项。输入主题后，系统会按所选模式生成更像正式成稿的教学内容。</p> -->
 
         <div class="form-group">
           <label for="topic-input">内容主题</label>
@@ -641,9 +641,9 @@
             <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
             <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
           </select>
-          <small style="color: var(--text-light); margin-top: 6px; display: block; line-height: 1.7;">
+          <!-- <small style="color: var(--text-light); margin-top: 6px; display: block; line-height: 1.7;">
             免费模型可能有配额限制；如果生成高峰期出现限流，可以切换到其他模型。
-          </small>
+          </small> -->
         </div>
 
         <div class="button-group">
@@ -728,6 +728,35 @@
         lessonContent.innerHTML = marked.parse(data.lesson_content);
       } else {
         lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无生成内容</p>';
+      }
+
+      // 渲染图片资源
+      if (data.image_resources && data.image_resources.length > 0) {
+        let imagesHtml = '<div class="resources-list">';
+        imagesHtml += '<h4 style="margin-bottom: 12px; color: var(--text-color);">📷 相关图片</h4>';
+        imagesHtml += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px;">';
+        
+        data.image_resources.forEach((image, index) => {
+          imagesHtml += `
+            <div class="resource-item" style="padding: 12px;">
+              <img src="${image.url}" alt="${image.caption || '图片 ' + (index + 1)}" 
+                   style="width: 100%; height: auto; border-radius: 8px; margin-bottom: 8px;"
+                   onerror="this.style.display='none'">
+              <div style="font-size: 12px; color: var(--text-light);">
+                <div><strong>来源:</strong> ${image.source}</div>
+                ${image.page ? `<div><strong>页码:</strong> ${image.page}</div>` : ''}
+                ${image.caption ? `<div><strong>描述:</strong> ${image.caption}</div>` : ''}
+              </div>
+            </div>
+          `;
+        });
+        
+        imagesHtml += '</div></div>';
+        
+        // 将图片插入到生成内容的末尾
+        const imagesDiv = document.createElement('div');
+        imagesDiv.innerHTML = imagesHtml;
+        lessonContent.appendChild(imagesDiv);
       }
 
       // 渲染参考文档

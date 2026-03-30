@@ -150,10 +150,67 @@ class QdrantStore(BaseVectorStore):
             if isinstance(v, (str, int, float, bool)):
                 sanitized[k] = v
             elif isinstance(v, (list, tuple)):
-                sanitized[k] = [str(x) for x in v]
+                # Handle list of dicts (like images) separately
+                if v and isinstance(v[0], dict):
+                    sanitized[k] = [self._sanitize_payload(item) if isinstance(item, dict) else str(item) for item in v]
+                else:
+                    sanitized[k] = [str(x) for x in v]
+            elif isinstance(v, dict):
+                sanitized[k] = self._sanitize_payload(v)
             else:
                 sanitized[k] = str(v)
         return sanitized
+
+    def _deserialize_payload(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Deserialize string-encoded dicts/lists back to proper types."""
+        import json
+        import ast
+        
+        def safe_parse_string(s: str):
+            """Try to parse a string as JSON or Python literal."""
+            if not s or s[0] not in ('{', '[', '"', "'"):
+                return s
+            
+            # Try JSON first (double quotes)
+            try:
+                return json.loads(s)
+            except (json.JSONDecodeError, ValueError):
+                pass
+            
+            # Try Python literal (single quotes)
+            try:
+                return ast.literal_eval(s)
+            except (ValueError, SyntaxError):
+                pass
+            
+            return s
+        
+        deserialized: Dict[str, Any] = {}
+        for k, v in metadata.items():
+            if isinstance(v, str):
+                # Try to parse as JSON or Python literal for known dict/list fields
+                if k in ('images', 'image_refs') or (v and v[0] in ('{', '[')):
+                    parsed = safe_parse_string(v)
+                    deserialized[k] = parsed
+                else:
+                    deserialized[k] = v
+            elif isinstance(v, list):
+                # Recursively deserialize list items
+                deserialized_list = []
+                for item in v:
+                    if isinstance(item, dict):
+                        deserialized_list.append(self._deserialize_payload(item))
+                    elif isinstance(item, str):
+                        parsed = safe_parse_string(item)
+                        deserialized_list.append(parsed)
+                    else:
+                        deserialized_list.append(item)
+                deserialized[k] = deserialized_list
+            elif isinstance(v, dict):
+                deserialized[k] = self._deserialize_payload(v)
+            else:
+                deserialized[k] = v
+        return deserialized
 
     # ------------------------------------------------------------------
     # BaseVectorStore interface
@@ -212,9 +269,10 @@ class QdrantStore(BaseVectorStore):
                 )
             qdrant_filter = qdrant_models.Filter(must=must_clauses)
 
-        results = self._client.search(
+        # Use query_points instead of search (qdrant-client 1.17.1+)
+        results = self._client.query_points(
             collection_name=self.collection_name,
-            query_vector=("", vector),
+            query=vector,
             limit=top_k,
             query_filter=qdrant_filter,
             with_payload=True,
@@ -223,15 +281,19 @@ class QdrantStore(BaseVectorStore):
         )
 
         output: List[Dict[str, Any]] = []
-        for result in results:
+        for result in results.points:
+            metadata = {
+                k: v for k, v in result.payload.items()
+                if k != "text"
+            }
+            # Deserialize string-encoded dicts/lists
+            metadata = self._deserialize_payload(metadata)
+            
             output.append({
                 "id": str(result.id),
                 "score": float(result.score),
                 "text": result.payload.get("text", ""),
-                "metadata": {
-                    k: v for k, v in result.payload.items()
-                    if k != "text"
-                },
+                "metadata": metadata,
             })
         return output
 

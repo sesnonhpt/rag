@@ -178,6 +178,249 @@ def _extract_caption_lookup(metadata: Dict[str, Any]) -> Dict[str, str]:
     return {}
 
 
+def _sanitize_source_path(source_path: Any) -> str:
+    if not source_path:
+        return "unknown"
+
+    normalized = str(source_path).replace("\\", "/")
+    data_index = normalized.find("/data/")
+    if data_index != -1:
+        return normalized[data_index:]
+
+    relative_data_index = normalized.find("data/")
+    if relative_data_index != -1:
+        return "/" + normalized[relative_data_index:]
+
+    return Path(normalized).name or "unknown"
+
+
+def _normalize_image_caption(caption: Optional[str]) -> Optional[str]:
+    if not caption:
+        return None
+
+    cleaned = " ".join(str(caption).strip().split())
+    if not cleaned:
+        return None
+
+    boilerplate_patterns = [
+        r"^the image contains\s+",
+        r"^the image shows\s+",
+        r"^the image depicts\s+",
+        r"^the figure shows\s+",
+        r"^the figure illustrates\s+",
+        r"^the text includes\s+",
+        r"^this image contains\s+",
+        r"^this figure shows\s+",
+        r"^图中包含\s*",
+        r"^图片中包含\s*",
+        r"^该图片展示了\s*",
+        r"^该图展示了\s*",
+    ]
+    for pattern in boilerplate_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+
+    replacements = {
+        "The text includes ": "",
+        "There is also ": "",
+        "It appears to be ": "",
+        "The image also includes ": "",
+        "The text in the image includes ": "",
+        "which appears to be ": "",
+        "and the text ": "；文字：",
+    }
+    for source, target in replacements.items():
+        cleaned = cleaned.replace(source, target)
+
+    cleaned = cleaned.strip(" .;，。；:")
+    cleaned = re.sub(r"\s*[:：]\s*", "：", cleaned)
+    cleaned = re.sub(r"\s*[,，]\s*", "，", cleaned)
+    cleaned = re.sub(r"\s*[;；]\s*", "；", cleaned)
+
+    if len(cleaned) > 120:
+        cleaned = cleaned[:117].rstrip("，。；: ") + "..."
+
+    return cleaned or None
+
+
+def _is_effective_lesson_image(
+    caption: Optional[str],
+    source_path: Any,
+    page: Optional[int],
+    image_info: Optional[Dict[str, Any]] = None,
+) -> bool:
+    text = " ".join(
+        part.strip().lower()
+        for part in [str(caption or ""), str(source_path or "")]
+        if part
+    )
+    position = image_info.get("position", {}) if isinstance(image_info, dict) else {}
+    image_type = str(position.get("type", "")).lower()
+    width = int(position.get("width") or 0)
+    height = int(position.get("height") or 0)
+    image_area = width * height
+
+    invalid_keywords = [
+        "logo",
+        "university logo",
+        "school logo",
+        "college logo",
+        "watermark",
+        "seal",
+        "emblem",
+        "cover page",
+        "title page",
+        "table of contents",
+        "contents page",
+        "目录页",
+        "目录",
+        "封面",
+        "扉页",
+        "华东师范大学",
+        "east china normal university",
+        "校徽",
+        "校名",
+        "校标",
+        "does not contain any text or diagrams",
+        "does not contain any text",
+        "does not contain diagrams",
+        "no text or diagrams",
+        "simple graphic design",
+        "geometric pattern",
+        "abstract pattern",
+        "decorative pattern",
+        "white and red geometric pattern",
+        "没有文字或图表",
+        "没有文字或图示",
+        "简单几何图形",
+        "装饰图案",
+        "抽象图案",
+    ]
+    if any(keyword in text for keyword in invalid_keywords):
+        return False
+
+    if page == 1 and image_type == "page_snapshot":
+        return False
+
+    if image_type == "page_snapshot" and any(keyword in text for keyword in ["目录", "contents", "table of contents"]):
+        return False
+
+    if image_type == "page_crop" and page == 1 and image_area and image_area < 120000:
+        return False
+
+    if image_area and image_area < 50000 and any(keyword in text for keyword in ["logo", "校徽", "watermark", "emblem"]):
+        return False
+
+    if page == 1 and caption:
+        first_page_noise_keywords = [
+            "university",
+            "学院",
+            "大学",
+            "课程名称",
+            "课件标题",
+            "contains the logo",
+            "presentation title",
+            "course title",
+            "institution name",
+        ]
+        if any(keyword.lower() in text for keyword in first_page_noise_keywords):
+            return False
+
+    return True
+
+
+def _score_lesson_image(
+    caption: Optional[str],
+    page: Optional[int],
+    image_info: Optional[Dict[str, Any]] = None,
+) -> int:
+    text = str(caption or "").strip().lower()
+    position = image_info.get("position", {}) if isinstance(image_info, dict) else {}
+    image_type = str(position.get("type", "")).lower()
+    width = int(position.get("width") or 0)
+    height = int(position.get("height") or 0)
+    area = width * height
+
+    score = 0
+
+    high_value_keywords = [
+        "架构图",
+        "结构图",
+        "流程图",
+        "示意图",
+        "原理图",
+        "网络结构",
+        "模型结构",
+        "模型架构",
+        "特征图",
+        "卷积",
+        "池化",
+        "classification",
+        "diagram",
+        "workflow",
+        "pipeline",
+        "architecture",
+        "chart",
+        "graph",
+        "plot",
+        "result",
+        "comparison",
+        "accuracy",
+        "loss",
+        "confusion matrix",
+        "heatmap",
+    ]
+    medium_value_keywords = [
+        "实验",
+        "结果",
+        "案例",
+        "对比",
+        "曲线",
+        "图表",
+        "表格",
+        "步骤",
+        "过程",
+        "分析",
+        "example",
+        "experiment",
+        "visualization",
+        "figure",
+        "table",
+    ]
+    low_value_keywords = [
+        "插图",
+        "配图",
+        "illustration",
+        "screenshot",
+    ]
+
+    if any(keyword in text for keyword in high_value_keywords):
+        score += 12
+    if any(keyword in text for keyword in medium_value_keywords):
+        score += 6
+    if any(keyword in text for keyword in low_value_keywords):
+        score += 2
+
+    if image_type == "page_crop":
+        score += 4
+    elif image_type == "page_snapshot":
+        score -= 3
+
+    if area >= 600000:
+        score += 4
+    elif area >= 200000:
+        score += 2
+    elif area and area < 80000:
+        score -= 2
+
+    if page is not None:
+        if 2 <= page <= 12:
+            score += 3
+        elif page > 20:
+            score -= 1
+
+    return score
+
+
 def _extract_image_resources(
     results: List[Any],
     image_storage: Optional[ImageStorage] = None,
@@ -185,7 +428,7 @@ def _extract_image_resources(
     max_images: int = 6,
 ) -> List[LessonImageResource]:
     seen_ids = set()
-    image_resources: List[LessonImageResource] = []
+    scored_resources: List[tuple[int, LessonImageResource]] = []
     doc_hashes = []
 
     for result in results:
@@ -206,7 +449,11 @@ def _extract_image_resources(
 
             image_id = image_info.get("id")
             image_path = image_info.get("path")
+            page_num = image_info.get("page") or metadata.get("page_num")
+            caption = _normalize_image_caption(caption_lookup.get(str(image_id)))
             if not image_id or not image_path or image_id in seen_ids:
+                continue
+            if not _is_effective_lesson_image(caption, source_path, page_num, image_info=image_info):
                 continue
 
             path_obj = Path(image_path)
@@ -217,21 +464,28 @@ def _extract_image_resources(
                 continue
 
             seen_ids.add(image_id)
-            image_resources.append(
-                LessonImageResource(
-                    image_id=str(image_id),
-                    url=f"/lesson-plan-image/{image_id}",
-                    source=str(source_path),
-                    page=image_info.get("page") or metadata.get("page_num"),
-                    caption=caption_lookup.get(str(image_id)),
+            scored_resources.append(
+                (
+                    _score_lesson_image(caption, page_num, image_info=image_info),
+                    LessonImageResource(
+                        image_id=str(image_id),
+                        url=f"/lesson-plan-image/{image_id}",
+                        source=_sanitize_source_path(source_path),
+                        page=page_num,
+                        caption=caption,
+                    ),
                 )
             )
 
-            if len(image_resources) >= max_images:
-                return image_resources
-
-    if len(image_resources) >= max_images or image_storage is None:
-        return image_resources
+    if image_storage is None:
+        scored_resources.sort(
+            key=lambda item: (
+                -item[0],
+                item[1].page if item[1].page is not None else 9999,
+                item[1].image_id,
+            )
+        )
+        return [resource for _, resource in scored_resources[:max_images]]
 
     # Fallback: some retrieved chunks don't carry image metadata after splitting/rerank.
     # Try to recover original PDF images by doc_hash from persistent image index.
@@ -247,7 +501,10 @@ def _extract_image_resources(
         for indexed in indexed_images:
             image_id = indexed.get("image_id")
             file_path = indexed.get("file_path")
+            page_num = indexed.get("page_num")
             if not image_id or not file_path or image_id in seen_ids:
+                continue
+            if not _is_effective_lesson_image(None, file_path, page_num):
                 continue
 
             path_obj = Path(file_path)
@@ -255,19 +512,27 @@ def _extract_image_resources(
                 continue
 
             seen_ids.add(image_id)
-            image_resources.append(
-                LessonImageResource(
-                    image_id=str(image_id),
-                    url=f"/lesson-plan-image/{image_id}",
-                    source=str(path_obj),
-                    page=indexed.get("page_num"),
-                    caption=None,
+            scored_resources.append(
+                (
+                    _score_lesson_image(None, page_num),
+                    LessonImageResource(
+                        image_id=str(image_id),
+                        url=f"/lesson-plan-image/{image_id}",
+                        source=_sanitize_source_path(path_obj),
+                        page=page_num,
+                        caption=None,
+                    ),
                 )
             )
-            if len(image_resources) >= max_images:
-                return image_resources
 
-    return image_resources
+    scored_resources.sort(
+        key=lambda item: (
+            -item[0],
+            item[1].page if item[1].page is not None else 9999,
+            item[1].image_id,
+        )
+    )
+    return [resource for _, resource in scored_resources[:max_images]]
 
 
 def _build_comprehensive_image_markdown(image_resources: List[LessonImageResource]) -> str:
@@ -291,7 +556,7 @@ def _build_comprehensive_image_markdown(image_resources: List[LessonImageResourc
         if image.caption:
             caption_parts.append(image.caption.strip())
         if image.source:
-            source_text = Path(image.source).name
+            source_text = image.source
             if image.page:
                 source_text += f" · 第 {image.page} 页"
             caption_parts.append(f"来源：{source_text}")
@@ -321,7 +586,7 @@ def _format_image_markdown_block(image: LessonImageResource, index: int) -> str:
     if image.caption:
         caption_parts.append(image.caption.strip())
     if image.source:
-        source_text = Path(image.source).name
+        source_text = image.source
         if image.page:
             source_text += f" · 第 {image.page} 页"
         caption_parts.append(f"来源：{source_text}")
@@ -698,7 +963,7 @@ async def chat(req: ChatRequest, request: Request):
     # 3. Build citations
     citations = [
         Citation(
-            source=(r.metadata or {}).get("source_path", "unknown"),
+            source=_sanitize_source_path((r.metadata or {}).get("source_path", "unknown")),
             score=round(r.score, 4),
             text=(r.text or "")[:200],
         )
@@ -807,7 +1072,7 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
     # 4. Build citations
     citations = [
         Citation(
-            source=(r.metadata or {}).get("source_path", "unknown"),
+            source=_sanitize_source_path((r.metadata or {}).get("source_path", "unknown")),
             score=round(r.score, 4),
             text=(r.text or "")[:200],
         )
