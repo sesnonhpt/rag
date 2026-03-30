@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir uv && \
     pyyaml==6.0.2 \
     openai==1.50.0 \
     pydantic==2.9.0 \
+    python-dotenv==1.0.1 \
     && python -c "import streamlit; print('Streamlit OK')"
 
 # 复制应用代码

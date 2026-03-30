@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Optional, Union
 import yaml
 from dotenv import load_dotenv
 
+# 加载项目根目录的 .env 文件（如果存在）
+load_dotenv()
+from dotenv import load_dotenv
+
 # ---------------------------------------------------------------------------
 # Repo root & path resolution
 # ---------------------------------------------------------------------------
