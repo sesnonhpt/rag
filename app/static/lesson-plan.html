@@ -160,6 +160,14 @@
       margin-bottom: 24px;
     }
 
+    .sidebar-stack {
+      display: grid;
+      gap: 18px;
+      align-self: start;
+      position: sticky;
+      top: 20px;
+    }
+
     .card-title {
       font-family: "Iowan Old Style", "Palatino Linotype", "Songti SC", serif;
       font-size: 28px;
@@ -282,6 +290,96 @@
       font-size: 15px;
       line-height: 1.85;
       color: var(--text-color);
+    }
+
+    .history-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .history-empty {
+      font-size: 14px;
+      line-height: 1.8;
+      color: var(--text-light);
+      padding: 8px 2px 2px;
+    }
+
+    .history-item {
+      padding: 14px 14px 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid rgba(24, 33, 38, 0.08);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .history-item:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(37, 53, 56, 0.08);
+    }
+
+    .history-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-light);
+    }
+
+    .history-topic {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-color);
+      line-height: 1.5;
+      margin-bottom: 6px;
+      word-break: break-word;
+    }
+
+    .history-summary {
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-light);
+      margin-bottom: 10px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .history-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .history-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .history-btn-primary {
+      background: rgba(15, 118, 110, 0.12);
+      color: var(--primary-color);
+    }
+
+    .history-btn-primary:hover {
+      background: rgba(15, 118, 110, 0.18);
+    }
+
+    .history-btn-secondary {
+      background: rgba(24, 33, 38, 0.08);
+      color: var(--text-light);
+    }
+
+    .history-btn-secondary:hover {
+      background: rgba(24, 33, 38, 0.12);
     }
 
     .result-card-content ul {
@@ -607,48 +705,53 @@
     </header>
 
     <div class="page-shell">
-      <div class="card">
-        <h2 class="card-title">模板设置</h2>
-        <!-- <p class="card-caption">保持操作简单，只保留最关键的选择项。输入主题后，系统会按所选模式生成更像正式成稿的教学内容。</p> -->
+      <div class="sidebar-stack">
+        <div class="card">
+          <h2 class="card-title">模板设置</h2>
+          <!-- <p class="card-caption">保持操作简单，只保留最关键的选择项。输入主题后，系统会按所选模式生成更像正式成稿的教学内容。</p> -->
 
-        <div class="form-group">
-          <label for="topic-input">内容主题</label>
-          <input type="text" id="topic-input" placeholder="例如：法拉第与电磁感应" />
+          <div class="form-group">
+            <label for="topic-input">内容主题</label>
+            <input type="text" id="topic-input" placeholder="例如：法拉第与电磁感应" />
+          </div>
+
+          <div class="form-group">
+            <label for="template-category">模板类别</label>
+            <select id="template-category">
+              <option value="guide">导学案模板</option>
+              <option value="comprehensive">综合模板</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <small style="color: var(--text-light); display: block; line-height: 1.75;" id="template-description">
+              💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="model-select">LLM模型</label>
+            <select id="model-select">
+              <option value="">默认模型 (coding-glm-5-free)</option>
+              <option value="gpt-4.1-free">GPT-4.1 Free</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+              <option value="coding-glm-5-free">Coding GLM-5 Free</option>
+              <option value="gpt-4o">GPT-4o (付费)</option>
+              <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
+              <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
+            </select>
+          </div>
+
+          <div class="button-group">
+            <button class="btn btn-primary" id="generate-btn">生成内容</button>
+            <button class="btn btn-secondary" id="reset-btn">重置</button>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label for="template-category">模板类别</label>
-          <select id="template-category">
-            <option value="guide">导学案模板</option>
-            <option value="comprehensive">综合模板</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <small style="color: var(--text-light); display: block; line-height: 1.75;" id="template-description">
-            💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿
-          </small>
-        </div>
-
-        <div class="form-group">
-          <label for="model-select">LLM模型</label>
-          <select id="model-select">
-            <option value="">默认模型 (coding-glm-5-free)</option>
-            <option value="gpt-4.1-free">GPT-4.1 Free</option>
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-            <option value="coding-glm-5-free">Coding GLM-5 Free</option>
-            <option value="gpt-4o">GPT-4o (付费)</option>
-            <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
-            <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
-          </select>
-          <!-- <small style="color: var(--text-light); margin-top: 6px; display: block; line-height: 1.7;">
-            免费模型可能有配额限制；如果生成高峰期出现限流，可以切换到其他模型。
-          </small> -->
-        </div>
-
-        <div class="button-group">
-          <button class="btn btn-primary" id="generate-btn">生成内容</button>
-          <button class="btn btn-secondary" id="reset-btn">重置</button>
+        <div class="card">
+          <h2 class="card-title">最近生成</h2>
+          <p class="card-caption">保留最近几次主题与模板选择，方便回看或继续生成。</p>
+          <div class="history-list" id="history-list"></div>
         </div>
       </div>
 
@@ -686,9 +789,28 @@
     const lessonContent = document.getElementById('lesson-content');
     const resourcesContent = document.getElementById('resources-content');
     const loadingOverlay = document.getElementById('loading-overlay');
+    const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
+    const HISTORY_STORAGE_KEY = 'lesson_plan_history_records';
+    const historyList = document.getElementById('history-list');
 
     const templateCategorySelect = document.getElementById('template-category');
     const templateDescription = document.getElementById('template-description');
+    let conversationState = null;
+    let historyRecords = [];
+
+    try {
+      const savedState = localStorage.getItem(CONVERSATION_STATE_KEY);
+      conversationState = savedState ? JSON.parse(savedState) : null;
+    } catch {
+      conversationState = null;
+    }
+
+    try {
+      const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
+      historyRecords = savedHistory ? JSON.parse(savedHistory) : [];
+    } catch {
+      historyRecords = [];
+    }
 
     const templateDescriptions = {
       guide: '💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿',
@@ -718,6 +840,101 @@
       setTimeout(() => {
         errorDiv.remove();
       }, 5000);
+    }
+
+    function formatHistoryTime(isoString) {
+      if (!isoString) return '';
+      try {
+        return new Date(isoString).toLocaleString('zh-CN', {
+          month: 'numeric',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch {
+        return '';
+      }
+    }
+
+    function buildHistorySummary(record) {
+      if (record.subject) {
+        return `${record.subject} · ${record.templateLabel || ''}`.trim();
+      }
+      return record.templateLabel || '最近生成记录';
+    }
+
+    function persistHistory() {
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyRecords));
+    }
+
+    async function loadBackendHistory() {
+      if (!conversationState?.session_id) return false;
+      try {
+        const response = await fetch(`/lesson-history?session_id=${encodeURIComponent(conversationState.session_id)}&limit=8`);
+        if (!response.ok) return false;
+        const data = await response.json();
+        historyRecords = Array.isArray(data.records) ? data.records : [];
+        persistHistory();
+        renderHistory();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function renderHistory() {
+      if (!historyRecords.length) {
+        historyList.innerHTML = '<div class="history-empty">这里会保留最近生成的主题，方便继续修改或快速回看。</div>';
+        return;
+      }
+
+      historyList.innerHTML = historyRecords.map((record, index) => `
+        <div class="history-item">
+          <div class="history-meta">
+            <span>${record.templateLabel || '生成记录'}</span>
+            <span>${formatHistoryTime(record.createdAt)}</span>
+          </div>
+          <div class="history-topic">${record.topic || '未命名主题'}</div>
+          <div class="history-summary">${buildHistorySummary(record)}</div>
+          <div class="history-actions">
+            <button class="history-btn history-btn-primary" type="button" data-history-action="restore" data-history-index="${index}">继续使用</button>
+            <button class="history-btn history-btn-secondary" type="button" data-history-action="delete" data-history-index="${index}">删除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function saveHistoryRecord(data) {
+      const record = {
+        topic: topicInput.value.trim(),
+        templateCategory: templateCategorySelect.value,
+        templateLabel: templateCategorySelect.options[templateCategorySelect.selectedIndex]?.textContent || '',
+        subject: data.subject || '',
+        createdAt: new Date().toISOString(),
+        conversationState: data.conversation_state || conversationState || null,
+        id: null,
+      };
+
+      if (Array.isArray(data.history_records) && data.history_records.length > 0) {
+        historyRecords = data.history_records;
+      } else {
+        historyRecords = [
+          record,
+          ...historyRecords.filter(item => !(item.topic === record.topic && item.templateCategory === record.templateCategory))
+        ].slice(0, 8);
+      }
+      persistHistory();
+      renderHistory();
+    }
+
+    function restoreHistoryRecord(index) {
+      const record = historyRecords[index];
+      if (!record) return;
+      topicInput.value = record.topic || '';
+      templateCategorySelect.value = record.templateCategory || 'guide';
+      conversationState = record.conversationState || null;
+      updateTemplateDescription();
+      topicInput.focus();
     }
 
     function renderResult(data) {
@@ -798,6 +1015,7 @@
           collection: 'default',
           model: modelSelect.value || null,
           template_category: templateCategory,
+          conversation_state: conversationState,
         };
 
         const response = await fetch('/lesson-plan', {
@@ -817,6 +1035,13 @@
         }
 
         const data = await response.json();
+        conversationState = data.conversation_state || null;
+        if (conversationState) {
+          localStorage.setItem(CONVERSATION_STATE_KEY, JSON.stringify(conversationState));
+        } else {
+          localStorage.removeItem(CONVERSATION_STATE_KEY);
+        }
+        saveHistoryRecord(data);
         renderResult(data);
       } catch (error) {
         showError(`请求失败：${error.message}`);
@@ -828,7 +1053,33 @@
     function resetForm() {
       topicInput.value = '';
       resultSection.style.display = 'none';
+      conversationState = null;
+      localStorage.removeItem(CONVERSATION_STATE_KEY);
     }
+
+    historyList.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-history-action]');
+      if (!target) return;
+
+      const action = target.dataset.historyAction;
+      const index = Number(target.dataset.historyIndex);
+      if (!Number.isInteger(index)) return;
+
+      if (action === 'restore') {
+        restoreHistoryRecord(index);
+        return;
+      }
+
+      if (action === 'delete') {
+        const record = historyRecords[index];
+        if (record?.id) {
+          fetch(`/lesson-history/${record.id}`, { method: 'DELETE' }).catch(() => {});
+        }
+        historyRecords.splice(index, 1);
+        persistHistory();
+        renderHistory();
+      }
+    });
 
     generateBtn.addEventListener('click', generateLessonPlan);
     resetBtn.addEventListener('click', resetForm);
@@ -841,6 +1092,8 @@
     });
 
     updateTemplateDescription();
+    renderHistory();
+    loadBackendHistory();
   </script>
 </body>
 </html>

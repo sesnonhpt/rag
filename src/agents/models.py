@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 
 @dataclass
@@ -29,6 +31,36 @@ class LessonReviewReport:
 
 
 @dataclass
+class QueryPlan:
+    """Structured query plan produced before retrieval."""
+
+    user_query: str
+    search_queries: List[str] = field(default_factory=list)
+    image_queries: List[str] = field(default_factory=list)
+    intent: str = "lesson_generation"
+    image_focus: bool = False
+    reasoning: str = ""
+
+
+@dataclass
+class ConversationState:
+    """Render-friendly stateless conversation state.
+
+    The client stores and resubmits this state, so the server remains stateless.
+    """
+
+    session_id: str = field(default_factory=lambda: uuid4().hex)
+    current_topic: Optional[str] = None
+    template_category: Optional[str] = None
+    recent_topics: List[str] = field(default_factory=list)
+    user_preferences: Dict[str, Any] = field(default_factory=dict)
+    latest_feedback: List[str] = field(default_factory=list)
+    latest_subject: Optional[str] = None
+    last_query_plan: Optional[Dict[str, Any]] = None
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+@dataclass
 class LessonAgentState:
     """Mutable state for the lesson-generation workflow."""
 
@@ -41,4 +73,6 @@ class LessonAgentState:
     final_content: Optional[str] = None
     review_notes: List[str] = field(default_factory=list)
     review_report: Optional[LessonReviewReport] = None
+    query_plan: Optional[QueryPlan] = None
+    conversation_state: Optional[ConversationState] = None
     metadata: Dict[str, Any] = field(default_factory=dict)

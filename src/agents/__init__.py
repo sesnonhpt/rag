@@ -1,6 +1,25 @@
 """Agent orchestration layer for lesson generation workflows."""
 
+from .conversation_agent import ConversationAgent
+from .history_storage import LessonHistoryStorage
 from .lesson_agent import LessonAgent
-from .models import LessonAgentAssets, LessonAgentState, LessonReviewReport
+from .models import (
+    ConversationState,
+    LessonAgentAssets,
+    LessonAgentState,
+    LessonReviewReport,
+    QueryPlan,
+)
+from .query_agent import QueryAgent
 
-__all__ = ["LessonAgent", "LessonAgentAssets", "LessonAgentState", "LessonReviewReport"]
+__all__ = [
+    "ConversationAgent",
+    "ConversationState",
+    "LessonHistoryStorage",
+    "LessonAgent",
+    "LessonAgentAssets",
+    "LessonAgentState",
+    "LessonReviewReport",
+    "QueryAgent",
+    "QueryPlan",
+]

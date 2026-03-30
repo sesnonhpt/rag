@@ -43,7 +43,7 @@ from src.core.templates import (
     GradeLevel, 
     LearningStyle
 )
-from src.agents import LessonAgent
+from src.agents import ConversationAgent, LessonAgent, LessonHistoryStorage, QueryAgent
 from src.ingestion.storage.bm25_indexer import BM25Indexer
 from src.ingestion.storage.image_storage import ImageStorage
 from src.libs.embedding.embedding_factory import EmbeddingFactory
@@ -79,6 +79,7 @@ class LessonPlanRequest(BaseModel):
     template_type: Optional[str] = Field(default=None, description="具体模板类型")
     grade_level: Optional[str] = Field(default=None, description="年级（个性化模板使用）")
     learning_style: Optional[str] = Field(default=None, description="学习风格（个性化模板使用）")
+    conversation_state: Optional[Dict[str, Any]] = Field(default=None, description="轻量会话状态")
 
 
 def _resolve_template_type(req: "LessonPlanRequest") -> Optional[str]:
@@ -127,6 +128,12 @@ class LessonPlanResponse(BaseModel):
     additional_resources: List[Citation] = Field(default_factory=list)
     image_resources: List[LessonImageResource] = Field(default_factory=list)
     review_report: Optional[LessonReviewReportResponse] = None
+    conversation_state: Optional[Dict[str, Any]] = None
+    history_records: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class LessonHistoryResponse(BaseModel):
+    records: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
@@ -430,13 +437,19 @@ def _extract_image_resources(
     seen_ids = set()
     scored_resources: List[tuple[int, LessonImageResource]] = []
     doc_hashes = []
+    preferred_pages: Dict[str, List[int]] = {}
 
-    for result in results:
+    for result_index, result in enumerate(results):
         metadata = result.metadata or {}
         images = metadata.get("images", [])
         doc_hash = metadata.get("doc_hash")
         if doc_hash and doc_hash not in doc_hashes:
             doc_hashes.append(doc_hash)
+        page_num = metadata.get("page_num")
+        if doc_hash and isinstance(page_num, int):
+            preferred_pages.setdefault(str(doc_hash), [])
+            if page_num not in preferred_pages[str(doc_hash)]:
+                preferred_pages[str(doc_hash)].append(page_num)
         if not isinstance(images, list):
             continue
 
@@ -464,9 +477,10 @@ def _extract_image_resources(
                 continue
 
             seen_ids.add(image_id)
+            rank_bonus = max(0, 8 - result_index)
             scored_resources.append(
                 (
-                    _score_lesson_image(caption, page_num, image_info=image_info),
+                    _score_lesson_image(caption, page_num, image_info=image_info) + rank_bonus,
                     LessonImageResource(
                         image_id=str(image_id),
                         url=f"/lesson-plan-image/{image_id}",
@@ -512,9 +526,19 @@ def _extract_image_resources(
                 continue
 
             seen_ids.add(image_id)
+            page_bonus = 0
+            doc_pages = preferred_pages.get(str(doc_hash), [])
+            if isinstance(page_num, int) and doc_pages:
+                page_distance = min(abs(page_num - candidate_page) for candidate_page in doc_pages)
+                if page_distance == 0:
+                    page_bonus = 10
+                elif page_distance == 1:
+                    page_bonus = 6
+                elif page_distance == 2:
+                    page_bonus = 3
             scored_resources.append(
                 (
-                    _score_lesson_image(None, page_num),
+                    _score_lesson_image(None, page_num) + page_bonus,
                     LessonImageResource(
                         image_id=str(image_id),
                         url=f"/lesson-plan-image/{image_id}",
@@ -533,6 +557,126 @@ def _extract_image_resources(
         )
     )
     return [resource for _, resource in scored_resources[:max_images]]
+
+
+def _score_result_for_visual_lesson(result: Any, query_plan: Any) -> float:
+    metadata = result.metadata or {}
+    text = str(result.text or "")
+    score = float(getattr(result, "score", 0.0) or 0.0)
+
+    if not query_plan or not getattr(query_plan, "image_focus", False):
+        return score
+
+    images = metadata.get("images", [])
+    image_captions = metadata.get("image_captions", [])
+    has_images = isinstance(images, list) and len(images) > 0
+    has_captions = bool(image_captions)
+    has_placeholder = "[IMAGE:" in text
+
+    visual_keywords = [
+        "结构图",
+        "流程图",
+        "示意图",
+        "图解",
+        "模型结构",
+        "网络结构",
+        "实验结果",
+        "图表",
+        "曲线",
+        "对比图",
+        "feature map",
+        "architecture",
+        "workflow",
+        "diagram",
+        "figure",
+        "plot",
+        "chart",
+        "result",
+    ]
+    visual_hits = sum(1 for keyword in visual_keywords if keyword.lower() in text.lower())
+
+    boost = 0.0
+    if has_images:
+        boost += 0.12
+    if has_captions:
+        boost += 0.08
+    if has_placeholder:
+        boost += 0.08
+    if visual_hits:
+        boost += min(0.12, visual_hits * 0.03)
+
+    page_num = metadata.get("page_num")
+    if isinstance(page_num, int) and 2 <= page_num <= 12:
+        boost += 0.03
+
+    return score + boost
+
+
+def _prioritize_visual_results(results: List[Any], query_plan: Any) -> List[Any]:
+    if not results or not query_plan or not getattr(query_plan, "image_focus", False):
+        return results
+
+    return sorted(
+        results,
+        key=lambda item: _score_result_for_visual_lesson(item, query_plan),
+        reverse=True,
+    )
+
+
+def _extract_topic_terms_for_filter(topic: str) -> List[str]:
+    raw_terms = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]{2,}", str(topic or ""))
+    stop_terms = {
+        "教案", "模板", "综合模板", "导学案", "综合教学模板", "教学", "内容", "主题",
+        "lesson", "guide", "template", "teaching",
+    }
+    terms: List[str] = []
+    for term in raw_terms:
+        normalized = term.strip().lower()
+        if not normalized or normalized in stop_terms:
+            continue
+        terms.append(normalized)
+        if re.fullmatch(r"[\u4e00-\u9fff]{4,}", normalized):
+            length = len(normalized)
+            for window in (2, 3, 4):
+                if length <= window:
+                    continue
+                for start in range(0, length - window + 1):
+                    piece = normalized[start:start + window]
+                    if piece not in stop_terms:
+                        terms.append(piece)
+    return list(dict.fromkeys(terms))
+
+
+def _is_result_relevant_to_topic(topic: str, result: Any) -> bool:
+    topic_terms = _extract_topic_terms_for_filter(topic)
+    if not topic_terms:
+        return True
+
+    text_parts = [str(result.text or "").lower()]
+    metadata = result.metadata or {}
+    source_path = str(metadata.get("source_path", "") or "").lower()
+    text_parts.append(source_path)
+    combined_text = " ".join(text_parts)
+
+    matched_terms = [term for term in topic_terms if term in combined_text]
+    required_matches = 1 if len(topic_terms) <= 2 else 2
+    return len(matched_terms) >= required_matches
+
+
+def _looks_like_lesson_refusal(content: str) -> bool:
+    text = str(content or "")
+    refusal_patterns = [
+        "基于当前上下文，无法",
+        "基于提供的上下文，无法",
+        "上下文内容并未涉及",
+        "没有涉及",
+        "因此，基于当前上下文，无法",
+        "请补充相关",
+        "很抱歉",
+        "谢谢您的理解",
+        "如需该主题的教案",
+    ]
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in refusal_patterns)
 
 
 def _build_comprehensive_image_markdown(image_resources: List[LessonImageResource]) -> str:
@@ -832,12 +976,16 @@ async def lifespan(app: FastAPI):
         db_path=str(_ROOT / "data" / "db" / "image_index.db"),
         images_root=str(_ROOT / "data" / "images"),
     )
+    history_storage = LessonHistoryStorage(
+        db_path=str(_ROOT / "data" / "db" / "lesson_history.db"),
+    )
 
     app.state.settings = settings
     app.state.hybrid_search = hybrid_search
     app.state.reranker = reranker
     app.state.llm = llm
     app.state.image_storage = image_storage
+    app.state.history_storage = history_storage
     app.state.default_collection = collection
 
     logger.info("Chat API components initialised successfully")
@@ -927,6 +1075,21 @@ async def health(request: Request):
     )
 
 
+@app.get("/lesson-history", response_model=LessonHistoryResponse)
+async def get_lesson_history(request: Request, session_id: Optional[str] = None, limit: int = 8):
+    storage = request.app.state.history_storage
+    safe_limit = max(1, min(limit, 20))
+    records = storage.list_records(limit=safe_limit, session_id=session_id)
+    return LessonHistoryResponse(records=records)
+
+
+@app.delete("/lesson-history/{record_id}")
+async def delete_lesson_history(record_id: int, request: Request):
+    storage = request.app.state.history_storage
+    storage.delete_record(record_id)
+    return {"ok": True}
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     state = request.app.state
@@ -968,7 +1131,15 @@ async def chat(req: ChatRequest, request: Request):
             text=(r.text or "")[:200],
         )
         for r in results
+        if _is_result_relevant_to_topic(req.topic, r)
     ]
+    trace.record_stage(
+        "lesson_reference_filtering",
+        {
+            "raw_result_count": len(results),
+            "filtered_citation_count": len(citations),
+        },
+    )
 
     # 4. LLM generation
     try:
@@ -1029,6 +1200,14 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
 
     top_k = 15  # 教案需要更多的上下文信息
     trace = TraceContext(trace_type="lesson_plan")
+    conversation_agent = ConversationAgent()
+    query_agent = QueryAgent()
+    conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
+    query_plan = query_agent.build_plan(
+        topic=req.topic,
+        template_category=req.template_category,
+        conversation_state=conversation_state,
+    )
 
     # 添加元数据
     trace.metadata["topic"] = req.topic
@@ -1039,37 +1218,64 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
     trace.metadata["include_examples"] = req.include_examples
     trace.metadata["template_category"] = req.template_category
     trace.metadata["template_type"] = req.template_type
+    trace.metadata["session_id"] = conversation_state.session_id
+    trace.metadata["query_plan"] = asdict(query_plan)
     if req.grade_level:
         trace.metadata["grade_level"] = req.grade_level
     if req.learning_style:
         trace.metadata["learning_style"] = req.learning_style
 
-    # 1. 扩展查询以获取更多相关信息
-    expanded_query = f"{req.topic} 背景 历史 原理 应用 实验 教学"
-    
-    # 2. Hybrid search
-    try:
-        hybrid_result = hybrid_search.search(
-            query=expanded_query,
-            top_k=top_k,
-            filters=None,
-            trace=trace,
-        )
-    except Exception as e:
-        logger.exception("HybridSearch failed for lesson plan")
-        raise HTTPException(status_code=500, detail="检索服务异常，请稍后重试") from e
+    # 1. QueryAgent 生成多路查询计划并执行检索
+    results: List[Any] = []
+    seen_result_keys = set()
+    search_queries = query_plan.search_queries or [req.topic]
+    per_query_top_k = max(6, min(top_k, (top_k // max(1, len(search_queries))) + 3))
 
-    results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results
+    for search_query in search_queries:
+        try:
+            hybrid_result = hybrid_search.search(
+                query=search_query,
+                top_k=per_query_top_k,
+                filters=None,
+                trace=trace,
+            )
+        except Exception as e:
+            logger.exception("HybridSearch failed for lesson plan")
+            raise HTTPException(status_code=500, detail="检索服务异常，请稍后重试") from e
 
-    # 3. Optional rerank
+        current_results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results
+        for item in current_results:
+            metadata = item.metadata or {}
+            key = (
+                metadata.get("chunk_id")
+                or metadata.get("id")
+                or f"{metadata.get('doc_hash')}::{metadata.get('page_num')}::{(item.text or '')[:80]}"
+            )
+            if key in seen_result_keys:
+                continue
+            seen_result_keys.add(key)
+            results.append(item)
+
+    results = results[:top_k]
+
+    # 2. Optional rerank
     if results and reranker.is_enabled:
         try:
-            rerank_result = reranker.rerank(query=expanded_query, results=results, top_k=top_k, trace=trace)
+            rerank_result = reranker.rerank(query=query_plan.user_query, results=results, top_k=top_k, trace=trace)
             results = rerank_result.results
         except Exception as e:
             logger.warning(f"Reranking failed for lesson plan, using original order: {e}")
+    results = _prioritize_visual_results(results, query_plan)[:top_k]
+    trace.record_stage(
+        "query_agent_prioritize_visual_results",
+        {
+            "enabled": bool(getattr(query_plan, "image_focus", False)),
+            "result_count": len(results),
+            "search_query_count": len(query_plan.search_queries or []),
+        },
+    )
 
-    # 4. Build citations
+    # 3. Build citations
     citations = [
         Citation(
             source=_sanitize_source_path((r.metadata or {}).get("source_path", "unknown")),
@@ -1084,7 +1290,7 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         collection=req.collection,
     )
 
-    # 5. Agent generation for lesson plan
+    # 4. Agent generation for lesson plan
     try:
         template_manager = TemplateManager()
         resolved_template_type = _resolve_template_type(req)
@@ -1103,8 +1309,25 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
             results=results,
             image_resources=image_resources,
             citations=citations,
+            query_plan=query_plan,
+            conversation_state=conversation_state,
+        )
+        finalized_conversation = conversation_agent.finalize_state(
+            conversation_state,
+            subject=agent_state.subject,
+            review_notes=agent_state.review_notes,
+            query_plan=query_plan,
         )
         lesson_plan_content = agent_state.final_content or agent_state.draft_content or ""
+        if _looks_like_lesson_refusal(lesson_plan_content):
+            recovery_messages = agent._build_autonomous_planning_messages(agent_state)
+            recovery_response = llm.chat(recovery_messages)
+            lesson_plan_content = recovery_response.content
+            agent_state.final_content = lesson_plan_content
+            trace.record_stage(
+                "lesson_agent_final_refusal_recovery",
+                {"applied": True},
+            )
         subject = agent_state.subject
     except Exception as e:
         logger.exception("LLM generation failed for lesson plan")
@@ -1117,12 +1340,33 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         "subject": subject,
         "template_type": resolved_template_type,
         "review_must_fix_count": len(agent_state.review_report.must_fix) if agent_state.review_report else 0,
+        "session_id": finalized_conversation.session_id,
     })
 
     # 保存trace
     trace.finish()
     from src.core.trace.trace_collector import TraceCollector
     TraceCollector().collect(trace)
+
+    history_records: List[Dict[str, Any]] = []
+    try:
+        lesson_preview = re.sub(r"\s+", " ", lesson_plan_content or "").strip()[:180]
+        request.app.state.history_storage.add_record(
+            session_id=finalized_conversation.session_id,
+            topic=req.topic,
+            template_category=req.template_category,
+            template_label="综合模板" if req.template_category == "comprehensive" else "导学案模板",
+            subject=subject,
+            created_at=finalized_conversation.updated_at,
+            conversation_state=asdict(finalized_conversation),
+            lesson_preview=lesson_preview,
+        )
+        history_records = request.app.state.history_storage.list_records(
+            limit=8,
+            session_id=finalized_conversation.session_id,
+        )
+    except Exception:
+        logger.exception("Failed to persist lesson history")
 
     return LessonPlanResponse(
         topic=req.topic,
@@ -1131,4 +1375,6 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         additional_resources=citations,
         image_resources=image_resources,
         review_report=_to_review_report_response(agent_state.review_report),
+        conversation_state=asdict(finalized_conversation),
+        history_records=history_records,
     )
