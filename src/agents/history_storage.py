@@ -33,10 +33,16 @@ class LessonHistoryStorage:
                     subject TEXT,
                     created_at TEXT NOT NULL,
                     conversation_state TEXT,
-                    lesson_preview TEXT
+                    lesson_preview TEXT,
+                    lesson_content TEXT,
+                    planning_mode TEXT,
+                    used_autonomous_fallback INTEGER DEFAULT 0
                 )
                 """
             )
+            self._ensure_column(conn, "lesson_history", "planning_mode", "TEXT")
+            self._ensure_column(conn, "lesson_history", "used_autonomous_fallback", "INTEGER DEFAULT 0")
+            self._ensure_column(conn, "lesson_history", "lesson_content", "TEXT")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_lesson_history_session
@@ -53,6 +59,14 @@ class LessonHistoryStorage:
         finally:
             conn.close()
 
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_spec: str) -> None:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {row[1] for row in rows}
+        if column_name in existing:
+            return
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_spec}")
+
     def add_record(
         self,
         *,
@@ -64,6 +78,9 @@ class LessonHistoryStorage:
         created_at: str,
         conversation_state: Optional[Dict[str, Any]],
         lesson_preview: Optional[str],
+        lesson_content: Optional[str],
+        planning_mode: Optional[str],
+        used_autonomous_fallback: bool,
     ) -> int:
         conn = sqlite3.connect(self.db_path)
         try:
@@ -77,9 +94,12 @@ class LessonHistoryStorage:
                     subject,
                     created_at,
                     conversation_state,
-                    lesson_preview
+                    lesson_preview,
+                    lesson_content,
+                    planning_mode,
+                    used_autonomous_fallback
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -90,6 +110,9 @@ class LessonHistoryStorage:
                     created_at,
                     json.dumps(conversation_state or {}, ensure_ascii=False),
                     lesson_preview or "",
+                    lesson_content or "",
+                    planning_mode,
+                    1 if used_autonomous_fallback else 0,
                 ),
             )
             conn.commit()
@@ -140,6 +163,9 @@ class LessonHistoryStorage:
                     "createdAt": row["created_at"],
                     "conversationState": parsed_state,
                     "summary": row["lesson_preview"] or "",
+                    "lessonContent": row["lesson_content"] or "",
+                    "planningMode": row["planning_mode"] or "context_first",
+                    "usedAutonomousFallback": bool(row["used_autonomous_fallback"] or 0),
                 }
             )
         return records

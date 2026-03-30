@@ -43,7 +43,17 @@ from src.core.templates import (
     GradeLevel, 
     LearningStyle
 )
-from src.agents import ConversationAgent, LessonAgent, LessonHistoryStorage, QueryAgent
+from src.agents import ConversationAgent, LessonHistoryStorage, PlannerAgent, QueryAgent, QueryPlan
+from src.agents.lesson_tools import (
+    GenerateLessonDraftRequest,
+    GenerateLessonDraftResponse,
+    LessonToolbox,
+    PlanLessonTaskRequest,
+    PlanLessonTaskResponse,
+    SearchTextChunksRequest,
+    SearchTextChunksResponse,
+)
+from src.agents.tool_runtime import ToolRuntime, ToolRuntimeError, ToolSpec
 from src.ingestion.storage.bm25_indexer import BM25Indexer
 from src.ingestion.storage.image_storage import ImageStorage
 from src.libs.embedding.embedding_factory import EmbeddingFactory
@@ -55,6 +65,15 @@ from src.observability.logger import get_logger
 logger = get_logger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
+_GEMINI_MODEL_PREFIXES = ("gemini-", "gemma-")
+_GEMINI_GATEWAY_BASE_URL = os.environ.get(
+    "GEMINI_GATEWAY_BASE_URL",
+    "https://gemini-gateway.xn--7dvnlw2c.top/v1",
+)
+_GEMINI_GATEWAY_API_KEY = os.environ.get(
+    "GEMINI_GATEWAY_API_KEY",
+    "sk-Ch@1-w3nch&^g-gemini-gateway-2025",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +109,51 @@ def _resolve_template_type(req: "LessonPlanRequest") -> Optional[str]:
     if req.template_category == "comprehensive":
         return "comprehensive_master"
     return None
+
+
+def _resolve_llm_auth_for_model(model_name: Optional[str], settings: Any) -> tuple[Optional[str], Optional[str]]:
+    model = str(model_name or "").strip().lower()
+    if model.startswith(_GEMINI_MODEL_PREFIXES):
+        return _GEMINI_GATEWAY_API_KEY, _GEMINI_GATEWAY_BASE_URL
+    return settings.llm.api_key, settings.llm.base_url
+
+
+def _build_api_error_detail(
+    *,
+    code: str,
+    message: str,
+    stage: Optional[str] = None,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"code": code, "message": message}
+    if stage:
+        payload["stage"] = stage
+    if trace_id:
+        payload["trace_id"] = trace_id
+    return payload
+
+
+def _map_tool_runtime_error(exc: ToolRuntimeError, *, stage: str, trace_id: Optional[str]) -> Dict[str, Any]:
+    if exc.code == "validation_error":
+        return _build_api_error_detail(
+            code="TOOL_VALIDATION_ERROR",
+            message=f"{stage}参数校验失败，请稍后重试",
+            stage=stage,
+            trace_id=trace_id,
+        )
+    if exc.code == "timeout_error":
+        return _build_api_error_detail(
+            code="TOOL_TIMEOUT",
+            message=f"{stage}超时，请稍后重试",
+            stage=stage,
+            trace_id=trace_id,
+        )
+    return _build_api_error_detail(
+        code="TOOL_EXECUTION_ERROR",
+        message=f"{stage}失败，请稍后重试",
+        stage=stage,
+        trace_id=trace_id,
+    )
 
 
 class Citation(BaseModel):
@@ -130,6 +194,9 @@ class LessonPlanResponse(BaseModel):
     review_report: Optional[LessonReviewReportResponse] = None
     conversation_state: Optional[Dict[str, Any]] = None
     history_records: List[Dict[str, Any]] = Field(default_factory=list)
+    execution_plan: Optional[Dict[str, Any]] = None
+    planning_mode: Optional[str] = None
+    used_autonomous_fallback: bool = False
 
 
 class LessonHistoryResponse(BaseModel):
@@ -564,7 +631,12 @@ def _score_result_for_visual_lesson(result: Any, query_plan: Any) -> float:
     text = str(result.text or "")
     score = float(getattr(result, "score", 0.0) or 0.0)
 
-    if not query_plan or not getattr(query_plan, "image_focus", False):
+    image_focus = False
+    if isinstance(query_plan, dict):
+        image_focus = bool(query_plan.get("image_focus", False))
+    else:
+        image_focus = bool(getattr(query_plan, "image_focus", False))
+    if not query_plan or not image_focus:
         return score
 
     images = metadata.get("images", [])
@@ -613,7 +685,12 @@ def _score_result_for_visual_lesson(result: Any, query_plan: Any) -> float:
 
 
 def _prioritize_visual_results(results: List[Any], query_plan: Any) -> List[Any]:
-    if not results or not query_plan or not getattr(query_plan, "image_focus", False):
+    image_focus = False
+    if isinstance(query_plan, dict):
+        image_focus = bool(query_plan.get("image_focus", False))
+    else:
+        image_focus = bool(getattr(query_plan, "image_focus", False))
+    if not results or not query_plan or not image_focus:
         return results
 
     return sorted(
@@ -1017,7 +1094,14 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.exception(f"Unhandled error on {request.url}: {exc}")
     return JSONResponse(
         status_code=500,
-        content={"error": "服务器内部错误，请稍后重试"},
+        content={
+            "error": "服务器内部错误，请稍后重试",
+            "detail": _build_api_error_detail(
+                code="INTERNAL_SERVER_ERROR",
+                message="服务器内部错误，请稍后重试",
+                stage="global",
+            ),
+        },
     )
 
 
@@ -1111,7 +1195,15 @@ async def chat(req: ChatRequest, request: Request):
         )
     except Exception as e:
         logger.exception("HybridSearch failed")
-        raise HTTPException(status_code=500, detail="检索服务异常，请稍后重试") from e
+        raise HTTPException(
+            status_code=500,
+            detail=_build_api_error_detail(
+                code="RETRIEVAL_ERROR",
+                message="检索服务异常，请稍后重试",
+                stage="chat_retrieval",
+                trace_id=trace.trace_id,
+            ),
+        ) from e
 
     results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results
 
@@ -1131,15 +1223,7 @@ async def chat(req: ChatRequest, request: Request):
             text=(r.text or "")[:200],
         )
         for r in results
-        if _is_result_relevant_to_topic(req.topic, r)
     ]
-    trace.record_stage(
-        "lesson_reference_filtering",
-        {
-            "raw_result_count": len(results),
-            "filtered_citation_count": len(citations),
-        },
-    )
 
     # 4. LLM generation
     try:
@@ -1165,7 +1249,15 @@ async def chat(req: ChatRequest, request: Request):
         answer = llm_response.content
     except Exception as e:
         logger.exception("LLM generation failed")
-        raise HTTPException(status_code=500, detail="LLM 服务异常，请稍后重试") from e
+        raise HTTPException(
+            status_code=500,
+            detail=_build_api_error_detail(
+                code="LLM_SERVICE_ERROR",
+                message=f"LLM 服务异常: {str(e)}"[:280],
+                stage="chat_generation",
+                trace_id=trace.trace_id,
+            ),
+        ) from e
 
     return ChatResponse(answer=answer, citations=citations)
 
@@ -1182,13 +1274,14 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         from src.libs.llm.llm_factory import LLMFactory
         from dataclasses import replace as dc_replace
         from src.core.settings import LLMSettings
-        
+        resolved_api_key, resolved_base_url = _resolve_llm_auth_for_model(req.model, settings)
+
         # 创建新的LLM配置
         new_llm_config = LLMSettings(
             provider=settings.llm.provider,
             model=req.model,
-            api_key=settings.llm.api_key,
-            base_url=settings.llm.base_url,
+            api_key=resolved_api_key,
+            base_url=resolved_base_url,
             temperature=settings.llm.temperature,
             max_tokens=settings.llm.max_tokens,
         )
@@ -1201,12 +1294,84 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
     top_k = 15  # 教案需要更多的上下文信息
     trace = TraceContext(trace_type="lesson_plan")
     conversation_agent = ConversationAgent()
+    planner_agent = PlannerAgent(llm=llm)
     query_agent = QueryAgent()
     conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
-    query_plan = query_agent.build_plan(
-        topic=req.topic,
-        template_category=req.template_category,
+    toolbox = LessonToolbox(
+        planner_agent=planner_agent,
+        query_agent=query_agent,
         conversation_state=conversation_state,
+        hybrid_search=hybrid_search,
+        reranker=reranker,
+        trace=trace,
+        llm=llm,
+        template_manager=TemplateManager(),
+        request=req,
+        build_default_prompt=_build_lesson_plan_prompt,
+        build_fallback_prompt=_build_lesson_plan_prompt_fallback,
+        integrate_images=_integrate_images_into_markdown,
+    )
+    runtime = ToolRuntime()
+    runtime.register(
+        "plan_lesson_task",
+        ToolSpec(
+            request_model=PlanLessonTaskRequest,
+            response_model=PlanLessonTaskResponse,
+            handler=toolbox.plan_lesson_task,
+            retry=1,
+            timeout_seconds=20.0,
+        ),
+    )
+    runtime.register(
+        "search_text_chunks",
+        ToolSpec(
+            request_model=SearchTextChunksRequest,
+            response_model=SearchTextChunksResponse,
+            handler=toolbox.search_text_chunks,
+            retry=1,
+            timeout_seconds=30.0,
+        ),
+    )
+    runtime.register(
+        "generate_lesson_draft",
+        ToolSpec(
+            request_model=GenerateLessonDraftRequest,
+            response_model=GenerateLessonDraftResponse,
+            handler=toolbox.generate_lesson_draft,
+            retry=1,
+            timeout_seconds=60.0,
+        ),
+    )
+
+    try:
+        planning_response = runtime.invoke(
+            "plan_lesson_task",
+            {
+                "topic": req.topic,
+                "template_category": req.template_category,
+                "conversation_state": req.conversation_state,
+            },
+            trace=trace,
+        )
+    except ToolRuntimeError as exc:
+        logger.exception("plan_lesson_task failed")
+        raise HTTPException(
+            status_code=500,
+            detail=_map_tool_runtime_error(exc, stage="lesson_planning", trace_id=trace.trace_id),
+        ) from exc
+
+    execution_plan = planning_response.execution_plan
+    query_plan = planning_response.query_plan
+    conversation_agent.apply_plan_to_state(conversation_state, execution_plan)
+    trace.record_stage(
+        "planner_agent_plan",
+        {
+            "plan_version": execution_plan.get("plan_version"),
+            "generation_mode": execution_plan.get("generation_mode"),
+            "need_images": execution_plan.get("need_images"),
+            "subject_guess": execution_plan.get("subject_guess"),
+            "query_focus_count": len(execution_plan.get("query_focus") or []),
+        },
     )
 
     # 添加元数据
@@ -1219,59 +1384,41 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
     trace.metadata["template_category"] = req.template_category
     trace.metadata["template_type"] = req.template_type
     trace.metadata["session_id"] = conversation_state.session_id
-    trace.metadata["query_plan"] = asdict(query_plan)
+    trace.metadata["query_plan"] = dict(query_plan)
+    trace.metadata["execution_plan"] = dict(execution_plan)
     if req.grade_level:
         trace.metadata["grade_level"] = req.grade_level
     if req.learning_style:
         trace.metadata["learning_style"] = req.learning_style
 
-    # 1. QueryAgent 生成多路查询计划并执行检索
-    results: List[Any] = []
-    seen_result_keys = set()
-    search_queries = query_plan.search_queries or [req.topic]
-    per_query_top_k = max(6, min(top_k, (top_k // max(1, len(search_queries))) + 3))
-
-    for search_query in search_queries:
-        try:
-            hybrid_result = hybrid_search.search(
-                query=search_query,
-                top_k=per_query_top_k,
-                filters=None,
-                trace=trace,
-            )
-        except Exception as e:
-            logger.exception("HybridSearch failed for lesson plan")
-            raise HTTPException(status_code=500, detail="检索服务异常，请稍后重试") from e
-
-        current_results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results
-        for item in current_results:
-            metadata = item.metadata or {}
-            key = (
-                metadata.get("chunk_id")
-                or metadata.get("id")
-                or f"{metadata.get('doc_hash')}::{metadata.get('page_num')}::{(item.text or '')[:80]}"
-            )
-            if key in seen_result_keys:
-                continue
-            seen_result_keys.add(key)
-            results.append(item)
-
-    results = results[:top_k]
-
-    # 2. Optional rerank
-    if results and reranker.is_enabled:
-        try:
-            rerank_result = reranker.rerank(query=query_plan.user_query, results=results, top_k=top_k, trace=trace)
-            results = rerank_result.results
-        except Exception as e:
-            logger.warning(f"Reranking failed for lesson plan, using original order: {e}")
-    results = _prioritize_visual_results(results, query_plan)[:top_k]
+    # 1. 搜索工具
+    try:
+        search_response = runtime.invoke(
+            "search_text_chunks",
+            {
+                "query_plan": query_plan,
+                "top_k": top_k,
+            },
+            trace=trace,
+        )
+    except ToolRuntimeError as exc:
+        logger.exception("search_text_chunks failed")
+        raise HTTPException(
+            status_code=500,
+            detail=_map_tool_runtime_error(exc, stage="lesson_retrieval", trace_id=trace.trace_id),
+        ) from exc
+    raw_results = _prioritize_visual_results(search_response.results, query_plan)[:top_k]
+    relevant_results = [
+        result for result in raw_results
+        if _is_result_relevant_to_topic(req.topic, result)
+    ]
     trace.record_stage(
         "query_agent_prioritize_visual_results",
         {
-            "enabled": bool(getattr(query_plan, "image_focus", False)),
-            "result_count": len(results),
-            "search_query_count": len(query_plan.search_queries or []),
+            "enabled": bool(query_plan.get("image_focus", False)),
+            "raw_result_count": len(raw_results),
+            "relevant_result_count": len(relevant_results),
+            "search_query_count": len(query_plan.get("search_queries") or []),
         },
     )
 
@@ -1282,64 +1429,87 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
             score=round(r.score, 4),
             text=(r.text or "")[:200],
         )
-        for r in results
+        for r in relevant_results
     ]
+    trace.record_stage(
+        "lesson_reference_filtering",
+        {
+            "raw_result_count": len(raw_results),
+            "relevant_result_count": len(relevant_results),
+            "filtered_citation_count": len(citations),
+        },
+    )
     image_resources = _extract_image_resources(
-        results,
+        relevant_results,
         image_storage=request.app.state.image_storage,
         collection=req.collection,
     )
 
     # 4. Agent generation for lesson plan
     try:
-        template_manager = TemplateManager()
         resolved_template_type = _resolve_template_type(req)
-        agent = LessonAgent(
-            llm=llm,
-            template_manager=template_manager,
+        generation_response = runtime.invoke(
+            "generate_lesson_draft",
+            {
+                "topic": req.topic,
+                "results": relevant_results,
+                "image_resources": image_resources,
+                "citations": citations,
+                "query_plan": query_plan,
+                "execution_plan": execution_plan,
+                "conversation_state": asdict(conversation_state),
+                "resolved_template_type": resolved_template_type,
+            },
             trace=trace,
-            request=req,
-            resolved_template_type=resolved_template_type,
-            build_default_prompt=_build_lesson_plan_prompt,
-            build_fallback_prompt=_build_lesson_plan_prompt_fallback,
-            integrate_images=_integrate_images_into_markdown,
         )
-        agent_state = agent.run(
-            topic=req.topic,
-            results=results,
-            image_resources=image_resources,
-            citations=citations,
-            query_plan=query_plan,
-            conversation_state=conversation_state,
-        )
+        lesson_plan_content = generation_response.lesson_plan_content
+        subject = generation_response.subject
+        review_report_payload = generation_response.review_report
+        review_notes = generation_response.review_notes
+        generation_metadata = generation_response.metadata
         finalized_conversation = conversation_agent.finalize_state(
             conversation_state,
-            subject=agent_state.subject,
-            review_notes=agent_state.review_notes,
-            query_plan=query_plan,
+            subject=subject,
+            review_notes=review_notes,
+            query_plan=QueryPlan(**query_plan),
+            execution_plan=execution_plan,
         )
-        lesson_plan_content = agent_state.final_content or agent_state.draft_content or ""
         if _looks_like_lesson_refusal(lesson_plan_content):
-            recovery_messages = agent._build_autonomous_planning_messages(agent_state)
-            recovery_response = llm.chat(recovery_messages)
-            lesson_plan_content = recovery_response.content
-            agent_state.final_content = lesson_plan_content
+            recovery_messages = [
+                Message(
+                    role="system",
+                    content=(
+                        "你是一名经验丰富的一线教师与教研组长。请直接基于主题与通用学科知识生成完整教案，"
+                        "不要输出拒绝、资料不足、要求补充材料等语句。"
+                    ),
+                ),
+                Message(role="user", content=f"请为主题“{req.topic}”生成完整成稿。"),
+            ]
+            lesson_plan_content = llm.chat(recovery_messages).content
             trace.record_stage(
                 "lesson_agent_final_refusal_recovery",
                 {"applied": True},
             )
-        subject = agent_state.subject
     except Exception as e:
         logger.exception("LLM generation failed for lesson plan")
-        raise HTTPException(status_code=500, detail="LLM 服务异常，请稍后重试") from e
+        raise HTTPException(
+            status_code=500,
+            detail=_build_api_error_detail(
+                code="LLM_SERVICE_ERROR",
+                message=f"LLM 服务异常: {str(e)}"[:280],
+                stage="lesson_generation",
+                trace_id=trace.trace_id,
+            ),
+        ) from e
 
     trace.record_stage("lesson_agent_complete", {
         "model": req.model or settings.llm.model,
-        "has_context": len(results) > 0,
+        "has_context": len(relevant_results) > 0,
         "image_count": len(image_resources),
         "subject": subject,
         "template_type": resolved_template_type,
-        "review_must_fix_count": len(agent_state.review_report.must_fix) if agent_state.review_report else 0,
+        "planning_mode": execution_plan.get("generation_mode"),
+        "review_must_fix_count": len((review_report_payload or {}).get("must_fix") or []),
         "session_id": finalized_conversation.session_id,
     })
 
@@ -1360,6 +1530,13 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
             created_at=finalized_conversation.updated_at,
             conversation_state=asdict(finalized_conversation),
             lesson_preview=lesson_preview,
+            lesson_content=lesson_plan_content,
+            planning_mode=execution_plan.get("generation_mode"),
+            used_autonomous_fallback=bool(
+                generation_metadata.get("forced_autonomous_retry_after_refusal")
+                or generation_metadata.get("forced_autonomous_retry_after_review")
+                or execution_plan.get("generation_mode") == "autonomous"
+            ),
         )
         history_records = request.app.state.history_storage.list_records(
             limit=8,
@@ -1374,7 +1551,14 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         lesson_content=lesson_plan_content,
         additional_resources=citations,
         image_resources=image_resources,
-        review_report=_to_review_report_response(agent_state.review_report),
+        review_report=_to_review_report_response(review_report_payload),
         conversation_state=asdict(finalized_conversation),
         history_records=history_records,
+        execution_plan=dict(execution_plan),
+        planning_mode=execution_plan.get("generation_mode"),
+        used_autonomous_fallback=bool(
+            generation_metadata.get("forced_autonomous_retry_after_refusal")
+            or generation_metadata.get("forced_autonomous_retry_after_review")
+            or execution_plan.get("generation_mode") == "autonomous"
+        ),
     )

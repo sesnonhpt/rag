@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from .planning_models import ExecutionPlan, PlanConstraint
 
 @dataclass
 class LessonAgentAssets:
@@ -56,7 +57,11 @@ class ConversationState:
     user_preferences: Dict[str, Any] = field(default_factory=dict)
     latest_feedback: List[str] = field(default_factory=list)
     latest_subject: Optional[str] = None
+    constraints: List[PlanConstraint] = field(default_factory=list)
+    task_memory: Dict[str, Any] = field(default_factory=dict)
+    last_plan: Optional[Dict[str, Any]] = None
     last_query_plan: Optional[Dict[str, Any]] = None
+    plan_version: str = "planner_v1"
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -74,5 +79,6 @@ class LessonAgentState:
     review_notes: List[str] = field(default_factory=list)
     review_report: Optional[LessonReviewReport] = None
     query_plan: Optional[QueryPlan] = None
+    execution_plan: Optional[ExecutionPlan] = None
     conversation_state: Optional[ConversationState] = None
     metadata: Dict[str, Any] = field(default_factory=dict)

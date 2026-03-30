@@ -7,7 +7,7 @@
 # =============================================================================
 llm:
   provider: "openai"  # AiHubMix is OpenAI-compatible
-  model: "coding-glm-5-free"  # 免费模型，可切换: gemini-2.0-flash, gpt-4o
+  model: "gemini-2.0-flash"  # 默认走 Gemini 网关模型，可切换: gemini-2.5-flash, gpt-4o
   # Use env var: LLM_API_KEY
   base_url: "https://aihubmix.com/v1"
   temperature: 0.0

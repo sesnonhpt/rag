@@ -11,6 +11,7 @@ from src.core.templates import GradeLevel, LearningStyle, TemplateConfig, Templa
 from src.libs.llm.base_llm import Message
 
 from .models import ConversationState, LessonAgentAssets, LessonAgentState, LessonReviewReport, QueryPlan
+from .planning_models import ExecutionPlan
 
 
 BuildPromptFn = Callable[[str, List[Any], bool, bool, bool], List[Message]]
@@ -55,6 +56,7 @@ class LessonAgent:
         image_resources: List[Any],
         citations: List[Any],
         query_plan: Optional[QueryPlan] = None,
+        execution_plan: Optional[ExecutionPlan] = None,
         conversation_state: Optional[ConversationState] = None,
     ) -> LessonAgentState:
         state = LessonAgentState(
@@ -62,6 +64,7 @@ class LessonAgent:
             template_category=self.request.template_category,
             template_type=self.resolved_template_type,
             query_plan=query_plan,
+            execution_plan=execution_plan,
             conversation_state=conversation_state,
         )
 
@@ -289,7 +292,13 @@ class LessonAgent:
 
     def _build_generation_messages(self, state: LessonAgentState) -> List[Message]:
         results = state.assets.text_results
+        forced_autonomous = (
+            state.execution_plan is not None
+            and str(state.execution_plan.generation_mode or "").strip().lower() == "autonomous"
+        )
         has_usable_context = self._has_usable_context_for_topic(self.request.topic, results)
+        if forced_autonomous:
+            has_usable_context = False
         effective_results = results if has_usable_context else []
         effective_images = state.assets.image_resources if has_usable_context else []
 
@@ -298,6 +307,7 @@ class LessonAgent:
             {
                 "raw_result_count": len(results),
                 "usable_context": has_usable_context,
+                "forced_autonomous": forced_autonomous,
                 "effective_result_count": len(effective_results),
                 "effective_image_count": len(effective_images),
             },

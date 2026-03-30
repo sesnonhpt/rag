@@ -382,6 +382,15 @@
       background: rgba(24, 33, 38, 0.12);
     }
 
+    .history-btn-neutral {
+      background: rgba(15, 118, 110, 0.08);
+      color: var(--primary-color);
+    }
+
+    .history-btn-neutral:hover {
+      background: rgba(15, 118, 110, 0.14);
+    }
+
     .result-card-content ul {
       margin-left: 20px;
       margin-top: 8px;
@@ -723,16 +732,17 @@
             </select>
           </div>
 
-          <div class="form-group">
-            <small style="color: var(--text-light); display: block; line-height: 1.75;" id="template-description">
-              💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿
-            </small>
-          </div>
+        <div class="form-group">
+          <small style="color: var(--text-light); display: block; line-height: 1.75;" id="template-description">
+            💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿
+          </small>
+          <small style="color: var(--text-light); display: block; line-height: 1.7; margin-top: 6px;" id="planning-indicator"></small>
+        </div>
 
           <div class="form-group">
             <label for="model-select">LLM模型</label>
             <select id="model-select">
-              <option value="">默认模型 (coding-glm-5-free)</option>
+              <option value="">默认模型 (gemini-2.0-flash)</option>
               <option value="gpt-4.1-free">GPT-4.1 Free</option>
               <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
               <option value="coding-glm-5-free">Coding GLM-5 Free</option>
@@ -795,6 +805,7 @@
 
     const templateCategorySelect = document.getElementById('template-category');
     const templateDescription = document.getElementById('template-description');
+    const planningIndicator = document.getElementById('planning-indicator');
     let conversationState = null;
     let historyRecords = [];
 
@@ -842,6 +853,24 @@
       }, 5000);
     }
 
+    function formatApiError(payload, fallbackText) {
+      if (!payload || typeof payload !== 'object') return fallbackText;
+      if (typeof payload.detail === 'string') return payload.detail;
+      if (typeof payload.error === 'string' && payload.error.trim()) return payload.error.trim();
+
+      const detail = payload.detail;
+      if (!detail || typeof detail !== 'object') return fallbackText;
+
+      const message = typeof detail.message === 'string' ? detail.message.trim() : '';
+      const code = typeof detail.code === 'string' ? detail.code.trim() : '';
+      const traceId = typeof detail.trace_id === 'string' ? detail.trace_id.trim() : '';
+
+      let text = message || fallbackText;
+      if (code) text += ` [${code}]`;
+      if (traceId) text += ` (trace: ${traceId.slice(0, 8)})`;
+      return text;
+    }
+
     function formatHistoryTime(isoString) {
       if (!isoString) return '';
       try {
@@ -857,10 +886,11 @@
     }
 
     function buildHistorySummary(record) {
+      const modeText = record.planningMode === 'autonomous' ? '自主规划' : '上下文优先';
       if (record.subject) {
-        return `${record.subject} · ${record.templateLabel || ''}`.trim();
+        return `${record.subject} · ${record.templateLabel || ''} · ${modeText}`.trim();
       }
-      return record.templateLabel || '最近生成记录';
+      return `${record.templateLabel || '最近生成记录'} · ${modeText}`.trim();
     }
 
     function persistHistory() {
@@ -897,6 +927,7 @@
           <div class="history-topic">${record.topic || '未命名主题'}</div>
           <div class="history-summary">${buildHistorySummary(record)}</div>
           <div class="history-actions">
+            <button class="history-btn history-btn-neutral" type="button" data-history-action="view" data-history-index="${index}">查看详情</button>
             <button class="history-btn history-btn-primary" type="button" data-history-action="restore" data-history-index="${index}">继续使用</button>
             <button class="history-btn history-btn-secondary" type="button" data-history-action="delete" data-history-index="${index}">删除</button>
           </div>
@@ -912,6 +943,9 @@
         subject: data.subject || '',
         createdAt: new Date().toISOString(),
         conversationState: data.conversation_state || conversationState || null,
+        planningMode: data.planning_mode || 'context_first',
+        usedAutonomousFallback: !!data.used_autonomous_fallback,
+        lessonContent: data.lesson_content || '',
         id: null,
       };
 
@@ -937,8 +971,36 @@
       topicInput.focus();
     }
 
+    function viewHistoryRecord(index) {
+      const record = historyRecords[index];
+      if (!record) return;
+      const content = record.lessonContent || record.lesson_content || '';
+      if (!content) {
+        showError('这条历史记录暂无完整教案内容，可点击“继续使用”重新生成。');
+        return;
+      }
+
+      topicInput.value = record.topic || '';
+      templateCategorySelect.value = record.templateCategory || 'guide';
+      conversationState = record.conversationState || null;
+      updateTemplateDescription();
+
+      renderResult({
+        topic: record.topic || '',
+        subject: record.subject || '',
+        lesson_content: content,
+        additional_resources: [],
+        image_resources: [],
+        planning_mode: record.planningMode || 'context_first',
+        used_autonomous_fallback: !!record.usedAutonomousFallback,
+      });
+    }
+
     function renderResult(data) {
       resultSection.style.display = 'block';
+      const planModeText = data.planning_mode === 'autonomous' ? '本次策略：自主规划' : '本次策略：上下文优先';
+      const fallbackHint = data.used_autonomous_fallback ? '（触发过自动兜底）' : '';
+      planningIndicator.textContent = `${planModeText}${fallbackHint}`;
 
       // 渲染生成内容（Markdown格式）
       if (data.lesson_content) {
@@ -1028,7 +1090,7 @@
           let errorText = `服务器错误 (${response.status})`;
           try {
             const data = await response.json();
-            errorText = data.error || data.detail || errorText;
+            errorText = formatApiError(data, errorText);
           } catch {}
           showError(errorText);
           return;
@@ -1055,6 +1117,7 @@
       resultSection.style.display = 'none';
       conversationState = null;
       localStorage.removeItem(CONVERSATION_STATE_KEY);
+      planningIndicator.textContent = '';
     }
 
     historyList.addEventListener('click', (event) => {
@@ -1067,6 +1130,11 @@
 
       if (action === 'restore') {
         restoreHistoryRecord(index);
+        return;
+      }
+
+      if (action === 'view') {
+        viewHistoryRecord(index);
         return;
       }
 
