@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -45,6 +44,7 @@ from src.agents import (
     PlannerAgent,
     QueryAgent,
     RetrieverAgent,
+    LessonTaskStorage,
     WriterReviewerAgent,
 )
 from src.ingestion.storage.bm25_indexer import BM25Indexer
@@ -67,10 +67,6 @@ _GEMINI_GATEWAY_API_KEY = os.environ.get(
     "GEMINI_GATEWAY_API_KEY",
     "sk-Ch@1-w3nch&^g-gemini-gateway-2025",
 )
-
-_LESSON_TASK_LOCK = threading.Lock()
-_LESSON_TASKS: Dict[str, Dict[str, Any]] = {}
-
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -1056,28 +1052,26 @@ def _build_lesson_plan_prompt_fallback(req: "LessonPlanRequest") -> List[Message
 # ---------------------------------------------------------------------------
 
 def _task_set(task_id: str, **payload: Any) -> None:
-    with _LESSON_TASK_LOCK:
-        current = dict(_LESSON_TASKS.get(task_id) or {})
-        current.update(payload)
-        _LESSON_TASKS[task_id] = current
+    storage = payload.pop("_storage")
+    current = storage.get(task_id) or {"task_id": task_id}
+    current.update(payload)
+    storage.upsert(
+        task_id=task_id,
+        status=str(current.get("status") or "queued"),
+        progress_stage=current.get("progress_stage"),
+        result=current.get("result") if isinstance(current.get("result"), dict) else None,
+        error=current.get("error") if isinstance(current.get("error"), dict) else None,
+        created_at=float(current.get("created_at") or time.time()),
+        finished_at=float(current["finished_at"]) if current.get("finished_at") is not None else None,
+    )
 
 
-def _task_get(task_id: str) -> Optional[Dict[str, Any]]:
-    with _LESSON_TASK_LOCK:
-        snapshot = _LESSON_TASKS.get(task_id)
-        return dict(snapshot) if snapshot else None
+def _task_get(task_id: str, storage: Any) -> Optional[Dict[str, Any]]:
+    return storage.get(task_id)
 
 
-def _task_cleanup(max_age_seconds: int = 3600) -> None:
-    now = time.time()
-    with _LESSON_TASK_LOCK:
-        expired = []
-        for task_id, payload in _LESSON_TASKS.items():
-            created_at = float(payload.get("created_at") or now)
-            if now - created_at > max_age_seconds:
-                expired.append(task_id)
-        for task_id in expired:
-            _LESSON_TASKS.pop(task_id, None)
+def _task_cleanup(storage: Any, max_age_seconds: int = 3600) -> None:
+    storage.cleanup(max_age_seconds=max_age_seconds)
 
 
 def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> LessonPlanResponse:
@@ -1292,6 +1286,9 @@ async def lifespan(app: FastAPI):
     history_storage = LessonHistoryStorage(
         db_path=str(_ROOT / "data" / "db" / "lesson_history.db"),
     )
+    task_storage = LessonTaskStorage(
+        db_path=str(_ROOT / "data" / "db" / "lesson_tasks.db"),
+    )
 
     app.state.settings = settings
     app.state.hybrid_search = hybrid_search
@@ -1299,6 +1296,7 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.image_storage = image_storage
     app.state.history_storage = history_storage
+    app.state.task_storage = task_storage
     app.state.default_collection = collection
 
     logger.info("Chat API components initialised successfully")
@@ -1528,10 +1526,12 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
 @app.post("/lesson-plan/tasks", response_model=LessonTaskCreateResponse)
 async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
     """Create an async lesson-generation task and return immediately."""
-    _task_cleanup()
+    task_storage = request.app.state.task_storage
+    _task_cleanup(task_storage)
     task_id = uuid.uuid4().hex
     _task_set(
         task_id,
+        _storage=task_storage,
         status="queued",
         progress_stage="queued",
         created_at=time.time(),
@@ -1539,7 +1539,7 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
 
     async def _runner() -> None:
         timeout_sec = float(os.environ.get("LESSON_PLAN_TASK_TIMEOUT_SEC", "180"))
-        _task_set(task_id, status="running", progress_stage="running")
+        _task_set(task_id, _storage=task_storage, status="running", progress_stage="running")
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(_generate_lesson_plan_internal, req, request),
@@ -1548,6 +1548,7 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
             result_payload = result.model_dump() if hasattr(result, "model_dump") else result.dict()
             _task_set(
                 task_id,
+                _storage=task_storage,
                 status="succeeded",
                 progress_stage="done",
                 result=result_payload,
@@ -1556,6 +1557,7 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
         except asyncio.TimeoutError:
             _task_set(
                 task_id,
+                _storage=task_storage,
                 status="failed",
                 progress_stage="timeout",
                 error={
@@ -1569,6 +1571,7 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
             logger.exception("Async lesson task failed")
             _task_set(
                 task_id,
+                _storage=task_storage,
                 status="failed",
                 progress_stage="failed",
                 error={
@@ -1584,8 +1587,8 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
 
 
 @app.get("/lesson-plan/tasks/{task_id}", response_model=LessonTaskStatusResponse)
-async def get_lesson_plan_task(task_id: str):
-    payload = _task_get(task_id)
+async def get_lesson_plan_task(task_id: str, request: Request):
+    payload = _task_get(task_id, request.app.state.task_storage)
     if not payload:
         raise HTTPException(status_code=404, detail="Task not found")
 

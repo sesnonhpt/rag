@@ -1146,7 +1146,7 @@
 
         const stageText = payload.progress_stage ? `当前阶段：${payload.progress_stage}` : '正在处理中';
         setLoadingText(`正在生成内容，请稍候... ${stageText}`);
-        await sleep(2000);
+        await sleep(3000);
       }
 
       throw new Error('任务等待超时，请稍后重试');
