@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -11,11 +12,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from dataclasses import asdict, is_dataclass
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -1078,7 +1079,11 @@ def _task_cleanup(storage: Any, max_age_seconds: int = 3600) -> None:
     storage.cleanup(max_age_seconds=max_age_seconds)
 
 
-def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> LessonPlanResponse:
+def _generate_lesson_plan_internal(
+    req: LessonPlanRequest,
+    request: Request,
+    progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+) -> LessonPlanResponse:
     started = time.monotonic()
     state = request.app.state
     settings = state.settings
@@ -1093,6 +1098,16 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
         fast_mode,
         req.collection,
     )
+    if progress_callback is not None:
+        progress_callback(
+            "internal_start",
+            {
+                "topic": req.topic,
+                "template_category": req.template_category or "comprehensive",
+                "model": req.model or state.settings.llm.model,
+                "collection": req.collection,
+            },
+        )
 
     # 动态切换模型
     if req.model:
@@ -1155,6 +1170,7 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
         writer_reviewer_agent=writer_reviewer_agent,
         conversation_agent=conversation_agent,
         trace=trace,
+        progress_callback=progress_callback,
     )
     trace.metadata["fast_mode"] = fast_mode
     if fast_mode:
@@ -1180,6 +1196,14 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
         (time.monotonic() - started) * 1000,
         req.topic,
     )
+    if progress_callback is not None:
+        progress_callback(
+            "orchestration_done",
+            {
+                "elapsed_ms": (time.monotonic() - started) * 1000,
+                "topic": req.topic,
+            },
+        )
     execution_plan = dict(orchestration_output["execution_plan"])
     query_plan = dict(orchestration_output["query_plan"])
     relevant_results = list(orchestration_output["results"] or [])
@@ -1300,6 +1324,10 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
             or execution_plan.get("generation_mode") == "autonomous"
         ),
     )
+
+
+def _format_sse_event(event: str, payload: Dict[str, Any]) -> bytes:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1557,6 +1585,91 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
             ),
         ) from e
     return response_payload
+
+
+@app.post("/lesson-plan/stream")
+async def stream_lesson_plan(req: LessonPlanRequest, request: Request):
+    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "180"))
+
+    async def event_stream():
+        queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def emit(stage: str, payload: Dict[str, Any]) -> None:
+            logger.info("lesson_plan.stream_progress topic=%s stage=%s", req.topic, stage)
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                _format_sse_event("progress", {"stage": stage, **payload}),
+            )
+
+        async def run_generation() -> None:
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        _generate_lesson_plan_internal,
+                        req,
+                        request,
+                        emit,
+                    ),
+                    timeout=lesson_timeout_sec,
+                )
+                result_payload = result.model_dump() if hasattr(result, "model_dump") else result.dict()
+                await queue.put(_format_sse_event("result", result_payload))
+            except asyncio.TimeoutError:
+                await queue.put(
+                    _format_sse_event(
+                        "error",
+                        {
+                            "code": "LESSON_TIMEOUT",
+                            "message": f"生成超时（>{int(lesson_timeout_sec)}s），请重试或切换更快模型",
+                            "stage": "lesson_orchestration",
+                        },
+                    )
+                )
+            except Exception as exc:
+                logger.exception("Lesson streaming orchestration failed")
+                await queue.put(
+                    _format_sse_event(
+                        "error",
+                        {
+                            "code": "LESSON_ORCHESTRATION_ERROR",
+                            "message": f"教案编排失败: {str(exc)}"[:280],
+                            "stage": "lesson_orchestration",
+                        },
+                    )
+                )
+            finally:
+                await queue.put(None)
+
+        worker = asyncio.create_task(run_generation())
+        yield _format_sse_event(
+            "progress",
+            {
+                "stage": "queued",
+                "topic": req.topic,
+                "template_category": req.template_category or "comprehensive",
+            },
+        )
+
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            if not worker.done():
+                worker.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/lesson-plan/tasks", response_model=LessonTaskCreateResponse)

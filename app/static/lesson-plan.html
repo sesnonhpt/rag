@@ -776,13 +776,31 @@
             <label for="model-select">LLM模型</label>
             <select id="model-select">
               <option value="">默认模型 (gemini-2.0-flash)</option>
-              <option value="gpt-4.1-free">GPT-4.1 Free</option>
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-              <option value="coding-glm-5-free">Coding GLM-5 Free</option>
-              <option value="gpt-4o">GPT-4o (付费)</option>
-              <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
-              <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
+              <optgroup label="Gemini 推荐">
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                <option value="gemini-flash-latest">Gemini Flash Latest</option>
+                <option value="gemini-flash-lite-latest">Gemini Flash Lite Latest</option>
+                <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
+              </optgroup>
+              <optgroup label="Gemma 指令模型">
+                <option value="gemma-3-4b-it">Gemma 3 4B IT</option>
+                <option value="gemma-3-12b-it">Gemma 3 12B IT</option>
+                <option value="gemma-3-27b-it">Gemma 3 27B IT</option>
+              </optgroup>
+              <optgroup label="其他可选">
+                <option value="gpt-4.1-free">GPT-4.1 Free</option>
+                <option value="coding-glm-5-free">Coding GLM-5 Free</option>
+                <option value="gpt-4o">GPT-4o (付费)</option>
+                <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
+                <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
+              </optgroup>
             </select>
+            <small style="color: var(--text-light); display: block; line-height: 1.7; margin-top: 6px;">
+              教案生成更推荐使用 Gemini Flash 系列；embedding 与 robotics 预览模型未放入此处，避免误选。
+            </small>
           </div>
 
           <div class="button-group">
@@ -1117,39 +1135,100 @@
       }
     }
 
-    function sleep(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
+    function progressTextForStage(stage, payload = {}) {
+      switch (stage) {
+        case 'queued':
+          return '正在建立流式连接...';
+        case 'internal_start':
+        case 'started':
+          return '正在分析主题与准备生成流程...';
+        case 'planner_done':
+          return `规划完成，准备检索资料${payload.search_query_count ? `（查询 ${payload.search_query_count} 路）` : ''}...`;
+        case 'retriever_done':
+          return `已检索到 ${payload.relevant_result_count ?? 0} 条相关内容，正在撰写正文...`;
+        case 'writer_done':
+          return '正文已完成，正在整理结果...';
+        case 'orchestration_done':
+        case 'completed':
+          return '内容生成完成，正在渲染页面...';
+        default:
+          return `正在生成内容，请稍候... 当前阶段：${stage}`;
+      }
     }
 
-    async function pollLessonTask(taskId) {
-      const maxAttempts = 120;
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        const response = await fetch(`/lesson-plan/tasks/${encodeURIComponent(taskId)}`);
-        if (!response.ok) {
-          let errorText = `任务查询失败 (${response.status})`;
-          try {
-            const data = await response.json();
-            errorText = formatApiError(data, errorText);
-          } catch {}
-          throw new Error(errorText);
-        }
+    async function streamLessonPlan(requestBody) {
+      const response = await fetch('/lesson-plan/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-        const payload = await response.json();
-        if (payload.status === 'succeeded' && payload.result) {
-          return payload.result;
-        }
-
-        if (payload.status === 'failed') {
-          const errorText = payload.error?.message || '生成任务失败，请重试';
-          throw new Error(errorText);
-        }
-
-        const stageText = payload.progress_stage ? `当前阶段：${payload.progress_stage}` : '正在处理中';
-        setLoadingText(`正在生成内容，请稍候... ${stageText}`);
-        await sleep(3000);
+      if (!response.ok) {
+        let errorText = `服务器错误 (${response.status})`;
+        try {
+          const data = await response.json();
+          errorText = formatApiError(data, errorText);
+        } catch {}
+        throw new Error(errorText);
       }
 
-      throw new Error('任务等待超时，请稍后重试');
+      if (!response.body) {
+        throw new Error('浏览器未返回可读取的流式内容');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+
+        for (const rawEvent of events) {
+          const lines = rawEvent.split('\n').filter(Boolean);
+          let eventName = 'message';
+          const dataLines = [];
+
+          lines.forEach((line) => {
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataLines.push(line.slice(5).trim());
+            }
+          });
+
+          if (!dataLines.length) continue;
+
+          let payload;
+          try {
+            payload = JSON.parse(dataLines.join('\n'));
+          } catch {
+            continue;
+          }
+
+          if (eventName === 'progress') {
+            setLoadingText(progressTextForStage(payload.stage, payload));
+            continue;
+          }
+
+          if (eventName === 'error') {
+            throw new Error(payload.message || '生成失败，请稍后重试');
+          }
+
+          if (eventName === 'result') {
+            return payload;
+          }
+        }
+      }
+
+      throw new Error('流式生成中断，请稍后重试');
     }
 
     async function generateLessonPlan() {
@@ -1172,31 +1251,8 @@
           conversation_state: conversationState,
         };
 
-        setLoadingText('正在创建生成任务...');
-        const response = await fetch('/lesson-plan/tasks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-          let errorText = `服务器错误 (${response.status})`;
-          try {
-            const data = await response.json();
-            errorText = formatApiError(data, errorText);
-          } catch {}
-          showError(errorText);
-          return;
-        }
-
-        const task = await response.json();
-        if (!task.task_id) {
-          showError('任务创建失败，请重试');
-          return;
-        }
-
-        setLoadingText('任务已创建，正在生成内容...');
-        const data = await pollLessonTask(task.task_id);
+        setLoadingText('正在启动流式生成...');
+        const data = await streamLessonPlan(requestBody);
         conversationState = data.conversation_state || null;
         if (conversationState) {
           localStorage.setItem(CONVERSATION_STATE_KEY, JSON.stringify(conversationState));

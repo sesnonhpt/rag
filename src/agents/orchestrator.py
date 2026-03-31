@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from src.observability.logger import get_logger
 
@@ -25,6 +25,7 @@ class LessonOrchestrator:
         writer_reviewer_agent: Any,
         conversation_agent: Any,
         trace: Any,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         self.planner_agent = planner_agent
         self.query_agent = query_agent
@@ -32,6 +33,7 @@ class LessonOrchestrator:
         self.writer_reviewer_agent = writer_reviewer_agent
         self.conversation_agent = conversation_agent
         self.trace = trace
+        self.progress_callback = progress_callback
 
     def run(
         self,
@@ -54,6 +56,14 @@ class LessonOrchestrator:
             next_action="plan",
         )
         self._record_waterfall("orchestrator_start", message, output=None)
+        self._emit_progress(
+            "started",
+            {
+                "topic": topic,
+                "template_category": template_category or "comprehensive",
+                "session_id": getattr(conversation_state, "session_id", None),
+            },
+        )
         logger.info(
             "lesson_orchestrator.start topic=%s template_category=%s session_id=%s",
             topic,
@@ -94,6 +104,15 @@ class LessonOrchestrator:
             execution_plan.need_images,
             len(query_plan.search_queries or []),
         )
+        self._emit_progress(
+            "planner_done",
+            {
+                "elapsed_ms": (time.monotonic() - planner_started) * 1000,
+                "generation_mode": execution_plan.generation_mode,
+                "need_images": execution_plan.need_images,
+                "search_query_count": len(query_plan.search_queries or []),
+            },
+        )
 
         self.conversation_agent.apply_plan_to_state(conversation_state, message.artifacts["execution_plan"])
 
@@ -125,6 +144,16 @@ class LessonOrchestrator:
             len(message.artifacts.get("relevant_results") or []),
             len(message.artifacts.get("citations") or []),
             len(message.artifacts.get("image_resources") or []),
+        )
+        self._emit_progress(
+            "retriever_done",
+            {
+                "elapsed_ms": (time.monotonic() - retriever_started) * 1000,
+                "raw_result_count": len(message.artifacts.get("raw_results") or []),
+                "relevant_result_count": len(message.artifacts.get("relevant_results") or []),
+                "citation_count": len(message.artifacts.get("citations") or []),
+                "image_count": len(message.artifacts.get("image_resources") or []),
+            },
         )
 
         writer_started = time.monotonic()
@@ -161,6 +190,16 @@ class LessonOrchestrator:
             len(writer_output.get("review_notes") or []),
             must_fix_count,
         )
+        self._emit_progress(
+            "writer_done",
+            {
+                "elapsed_ms": (time.monotonic() - writer_started) * 1000,
+                "has_content": bool(writer_output.get("lesson_plan_content")),
+                "subject": writer_output.get("subject"),
+                "review_note_count": len(writer_output.get("review_notes") or []),
+                "must_fix_count": must_fix_count,
+            },
+        )
 
         finalized_conversation = self.conversation_agent.finalize_state(
             conversation_state,
@@ -176,6 +215,14 @@ class LessonOrchestrator:
             total_elapsed_ms,
             topic,
             getattr(finalized_conversation, "session_id", None),
+        )
+        self._emit_progress(
+            "completed",
+            {
+                "elapsed_ms": total_elapsed_ms,
+                "topic": topic,
+                "session_id": getattr(finalized_conversation, "session_id", None),
+            },
         )
 
         return {
@@ -207,3 +254,8 @@ class LessonOrchestrator:
         if output is not None:
             data["output"] = output
         self.trace.record_stage(f"agent_waterfall_{agent_name}", data, elapsed_ms=elapsed_ms)
+
+    def _emit_progress(self, stage: str, payload: Dict[str, Any]) -> None:
+        if self.progress_callback is None:
+            return
+        self.progress_callback(stage, payload)
