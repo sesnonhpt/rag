@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dataclasses import asdict, is_dataclass
@@ -64,6 +67,9 @@ _GEMINI_GATEWAY_API_KEY = os.environ.get(
     "GEMINI_GATEWAY_API_KEY",
     "sk-Ch@1-w3nch&^g-gemini-gateway-2025",
 )
+
+_LESSON_TASK_LOCK = threading.Lock()
+_LESSON_TASKS: Dict[str, Dict[str, Any]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +179,19 @@ class LessonHistoryResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     components: dict
+
+
+class LessonTaskCreateResponse(BaseModel):
+    task_id: str
+    status: str = "queued"
+
+
+class LessonTaskStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    progress_stage: Optional[str] = None
+    result: Optional[LessonPlanResponse] = None
+    error: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1033,6 +1052,227 @@ def _build_lesson_plan_prompt_fallback(req: "LessonPlanRequest") -> List[Message
 
 
 # ---------------------------------------------------------------------------
+# Lesson task helpers
+# ---------------------------------------------------------------------------
+
+def _task_set(task_id: str, **payload: Any) -> None:
+    with _LESSON_TASK_LOCK:
+        current = dict(_LESSON_TASKS.get(task_id) or {})
+        current.update(payload)
+        _LESSON_TASKS[task_id] = current
+
+
+def _task_get(task_id: str) -> Optional[Dict[str, Any]]:
+    with _LESSON_TASK_LOCK:
+        snapshot = _LESSON_TASKS.get(task_id)
+        return dict(snapshot) if snapshot else None
+
+
+def _task_cleanup(max_age_seconds: int = 3600) -> None:
+    now = time.time()
+    with _LESSON_TASK_LOCK:
+        expired = []
+        for task_id, payload in _LESSON_TASKS.items():
+            created_at = float(payload.get("created_at") or now)
+            if now - created_at > max_age_seconds:
+                expired.append(task_id)
+        for task_id in expired:
+            _LESSON_TASKS.pop(task_id, None)
+
+
+def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> LessonPlanResponse:
+    state = request.app.state
+    settings = state.settings
+    hybrid_search = state.hybrid_search
+    reranker = state.reranker
+
+    # 动态切换模型
+    if req.model:
+        from src.libs.llm.llm_factory import LLMFactory
+        from dataclasses import replace as dc_replace
+        from src.core.settings import LLMSettings
+        resolved_api_key, resolved_base_url = _resolve_llm_auth_for_model(req.model, settings)
+
+        # 创建新的LLM配置
+        new_llm_config = LLMSettings(
+            provider=settings.llm.provider,
+            model=req.model,
+            api_key=resolved_api_key,
+            base_url=resolved_base_url,
+            temperature=settings.llm.temperature,
+            max_tokens=settings.llm.max_tokens,
+        )
+        new_settings = dc_replace(settings, llm=new_llm_config)
+        llm = LLMFactory.create(new_settings)
+        logger.info(f"Using custom model: {req.model}")
+    else:
+        llm = state.llm
+
+    top_k = 15  # 教案需要更多的上下文信息
+    trace = TraceContext(trace_type="lesson_plan")
+    resolved_template_type = _resolve_template_type(req)
+    conversation_agent = ConversationAgent()
+    planner_agent = PlannerAgent(llm=llm)
+    query_agent = QueryAgent()
+    conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
+    retriever_agent = RetrieverAgent(
+        hybrid_search=hybrid_search,
+        reranker=reranker,
+        trace=trace,
+        top_k=top_k,
+        prioritize_visual_results=_prioritize_visual_results,
+        relevance_check=_is_result_relevant_to_topic,
+        extract_image_resources=_extract_image_resources,
+        sanitize_source_path=_sanitize_source_path,
+        image_storage=request.app.state.image_storage,
+        collection=req.collection,
+    )
+    writer_reviewer_agent = WriterReviewerAgent(
+        llm=llm,
+        template_manager=TemplateManager(),
+        trace=trace,
+        request=req,
+        resolved_template_type=resolved_template_type,
+        build_default_prompt=_build_lesson_plan_prompt,
+        build_fallback_prompt=_build_lesson_plan_prompt_fallback,
+        integrate_images=_integrate_images_into_markdown,
+    )
+    orchestrator = LessonOrchestrator(
+        planner_agent=planner_agent,
+        query_agent=query_agent,
+        retriever_agent=retriever_agent,
+        writer_reviewer_agent=writer_reviewer_agent,
+        conversation_agent=conversation_agent,
+        trace=trace,
+    )
+
+    orchestration_output = orchestrator.run(
+        topic=req.topic,
+        template_category=req.template_category,
+        conversation_state=conversation_state,
+    )
+    execution_plan = dict(orchestration_output["execution_plan"])
+    query_plan = dict(orchestration_output["query_plan"])
+    relevant_results = list(orchestration_output["results"] or [])
+    image_resources = list(orchestration_output["image_resources"] or [])
+    lesson_plan_content = str(orchestration_output["lesson_plan_content"] or "")
+    subject = orchestration_output.get("subject")
+    review_report_payload = orchestration_output.get("review_report")
+    review_notes = list(orchestration_output.get("review_notes") or [])
+    generation_metadata = dict(orchestration_output.get("generation_metadata") or {})
+    finalized_conversation = orchestration_output["conversation_state"]
+    citations = [
+        Citation(
+            source=str(item.get("source") or "unknown"),
+            score=float(item.get("score") or 0.0),
+            text=str(item.get("text") or ""),
+        )
+        for item in (orchestration_output.get("citations") or [])
+    ]
+
+    if _looks_like_lesson_refusal(lesson_plan_content):
+        recovery_messages = [
+            Message(
+                role="system",
+                content=(
+                    "你是一名经验丰富的一线教师与教研组长。请直接基于主题与通用学科知识生成完整教案，"
+                    "不要输出拒绝、资料不足、要求补充材料等语句。"
+                ),
+            ),
+            Message(role="user", content=f"请为主题“{req.topic}”生成完整成稿。"),
+        ]
+        lesson_plan_content = llm.chat(recovery_messages).content
+        trace.record_stage(
+            "lesson_agent_final_refusal_recovery",
+            {"applied": True},
+        )
+
+    # 添加元数据
+    trace.metadata["topic"] = req.topic
+    trace.metadata["collection"] = req.collection
+    trace.metadata["model"] = req.model or settings.llm.model
+    trace.metadata["include_background"] = req.include_background
+    trace.metadata["include_facts"] = req.include_facts
+    trace.metadata["include_examples"] = req.include_examples
+    trace.metadata["template_category"] = req.template_category
+    trace.metadata["template_type"] = req.template_type
+    trace.metadata["session_id"] = finalized_conversation.session_id
+    trace.metadata["agent_protocol"] = "lesson_agent_msg_v1"
+    trace.metadata["query_plan"] = dict(query_plan)
+    trace.metadata["execution_plan"] = dict(execution_plan)
+    if req.grade_level:
+        trace.metadata["grade_level"] = req.grade_level
+    if req.learning_style:
+        trace.metadata["learning_style"] = req.learning_style
+
+    if isinstance(review_report_payload, dict):
+        review_must_fix = list(review_report_payload.get("must_fix") or [])
+    else:
+        review_must_fix = list(getattr(review_report_payload, "must_fix", []) or [])
+
+    trace.record_stage("lesson_agent_complete", {
+        "model": req.model or settings.llm.model,
+        "has_context": len(relevant_results) > 0,
+        "image_count": len(image_resources),
+        "subject": subject,
+        "template_type": resolved_template_type,
+        "planning_mode": execution_plan.get("generation_mode"),
+        "review_must_fix_count": len(review_must_fix),
+        "session_id": finalized_conversation.session_id,
+    })
+
+    # 保存trace
+    trace.finish()
+    from src.core.trace.trace_collector import TraceCollector
+    TraceCollector().collect(trace)
+
+    history_records: List[Dict[str, Any]] = []
+    try:
+        lesson_preview = re.sub(r"\s+", " ", lesson_plan_content or "").strip()[:180]
+        request.app.state.history_storage.add_record(
+            session_id=finalized_conversation.session_id,
+            topic=req.topic,
+            template_category=req.template_category,
+            template_label="综合模板" if req.template_category == "comprehensive" else "导学案模板",
+            subject=subject,
+            created_at=finalized_conversation.updated_at,
+            conversation_state=asdict(finalized_conversation),
+            lesson_preview=lesson_preview,
+            lesson_content=lesson_plan_content,
+            planning_mode=execution_plan.get("generation_mode"),
+            used_autonomous_fallback=bool(
+                generation_metadata.get("forced_autonomous_retry_after_refusal")
+                or generation_metadata.get("forced_autonomous_retry_after_review")
+                or execution_plan.get("generation_mode") == "autonomous"
+            ),
+        )
+        history_records = request.app.state.history_storage.list_records(
+            limit=8,
+            session_id=finalized_conversation.session_id,
+        )
+    except Exception:
+        logger.exception("Failed to persist lesson history")
+
+    return LessonPlanResponse(
+        topic=req.topic,
+        subject=subject,
+        lesson_content=lesson_plan_content,
+        additional_resources=citations,
+        image_resources=image_resources,
+        review_report=_to_review_report_response(review_report_payload),
+        conversation_state=asdict(finalized_conversation),
+        history_records=history_records,
+        execution_plan=dict(execution_plan),
+        planning_mode=execution_plan.get("generation_mode"),
+        used_autonomous_fallback=bool(
+            generation_metadata.get("forced_autonomous_retry_after_refusal")
+            or generation_metadata.get("forced_autonomous_retry_after_review")
+            or execution_plan.get("generation_mode") == "autonomous"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # App lifecycle
 # ---------------------------------------------------------------------------
 
@@ -1252,117 +1492,16 @@ async def chat(req: ChatRequest, request: Request):
 
 @app.post("/lesson-plan", response_model=LessonPlanResponse)
 async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
-    state = request.app.state
-    settings = state.settings
-    hybrid_search = state.hybrid_search
-    reranker = state.reranker
-    
-    # 动态切换模型
-    if req.model:
-        from src.libs.llm.llm_factory import LLMFactory
-        from dataclasses import replace as dc_replace
-        from src.core.settings import LLMSettings
-        resolved_api_key, resolved_base_url = _resolve_llm_auth_for_model(req.model, settings)
-
-        # 创建新的LLM配置
-        new_llm_config = LLMSettings(
-            provider=settings.llm.provider,
-            model=req.model,
-            api_key=resolved_api_key,
-            base_url=resolved_base_url,
-            temperature=settings.llm.temperature,
-            max_tokens=settings.llm.max_tokens,
-        )
-        new_settings = dc_replace(settings, llm=new_llm_config)
-        llm = LLMFactory.create(new_settings)
-        logger.info(f"Using custom model: {req.model}")
-    else:
-        llm = state.llm
-
-    top_k = 15  # 教案需要更多的上下文信息
-    trace = TraceContext(trace_type="lesson_plan")
-    resolved_template_type = _resolve_template_type(req)
-    conversation_agent = ConversationAgent()
-    planner_agent = PlannerAgent(llm=llm)
-    query_agent = QueryAgent()
-    conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
-    retriever_agent = RetrieverAgent(
-        hybrid_search=hybrid_search,
-        reranker=reranker,
-        trace=trace,
-        top_k=top_k,
-        prioritize_visual_results=_prioritize_visual_results,
-        relevance_check=_is_result_relevant_to_topic,
-        extract_image_resources=_extract_image_resources,
-        sanitize_source_path=_sanitize_source_path,
-        image_storage=request.app.state.image_storage,
-        collection=req.collection,
-    )
-    writer_reviewer_agent = WriterReviewerAgent(
-        llm=llm,
-        template_manager=TemplateManager(),
-        trace=trace,
-        request=req,
-        resolved_template_type=resolved_template_type,
-        build_default_prompt=_build_lesson_plan_prompt,
-        build_fallback_prompt=_build_lesson_plan_prompt_fallback,
-        integrate_images=_integrate_images_into_markdown,
-    )
-    orchestrator = LessonOrchestrator(
-        planner_agent=planner_agent,
-        query_agent=query_agent,
-        retriever_agent=retriever_agent,
-        writer_reviewer_agent=writer_reviewer_agent,
-        conversation_agent=conversation_agent,
-        trace=trace,
-    )
-
-    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "300"))
+    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "85"))
     try:
-        orchestration_output = await asyncio.wait_for(
+        response_payload = await asyncio.wait_for(
             asyncio.to_thread(
-                orchestrator.run,
-                topic=req.topic,
-                template_category=req.template_category,
-                conversation_state=conversation_state,
+                _generate_lesson_plan_internal,
+                req,
+                request,
             ),
             timeout=lesson_timeout_sec,
         )
-        execution_plan = dict(orchestration_output["execution_plan"])
-        query_plan = dict(orchestration_output["query_plan"])
-        relevant_results = list(orchestration_output["results"] or [])
-        image_resources = list(orchestration_output["image_resources"] or [])
-        lesson_plan_content = str(orchestration_output["lesson_plan_content"] or "")
-        subject = orchestration_output.get("subject")
-        review_report_payload = orchestration_output.get("review_report")
-        review_notes = list(orchestration_output.get("review_notes") or [])
-        generation_metadata = dict(orchestration_output.get("generation_metadata") or {})
-        finalized_conversation = orchestration_output["conversation_state"]
-        citations = [
-            Citation(
-                source=str(item.get("source") or "unknown"),
-                score=float(item.get("score") or 0.0),
-                text=str(item.get("text") or ""),
-            )
-            for item in (orchestration_output.get("citations") or [])
-        ]
-
-        if _looks_like_lesson_refusal(lesson_plan_content):
-            recovery_messages = [
-                Message(
-                    role="system",
-                    content=(
-                        "你是一名经验丰富的一线教师与教研组长。请直接基于主题与通用学科知识生成完整教案，"
-                        "不要输出拒绝、资料不足、要求补充材料等语句。"
-                    ),
-                ),
-                Message(role="user", content=f"请为主题“{req.topic}”生成完整成稿。"),
-            ]
-            lesson_plan_content = llm.chat(recovery_messages).content
-            trace.record_stage(
-                "lesson_agent_final_refusal_recovery",
-                {"applied": True},
-            )
     except asyncio.TimeoutError:
         logger.exception("Lesson orchestration timed out")
         raise HTTPException(
@@ -1371,7 +1510,6 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
                 code="LESSON_TIMEOUT",
                 message=f"生成超时（>{int(lesson_timeout_sec)}s），请重试或切换更快模型",
                 stage="lesson_orchestration",
-                trace_id=trace.trace_id,
             ),
         )
     except Exception as e:
@@ -1382,90 +1520,86 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
                 code="LESSON_ORCHESTRATION_ERROR",
                 message=f"教案编排失败: {str(e)}"[:280],
                 stage="lesson_orchestration",
-                trace_id=trace.trace_id,
             ),
         ) from e
+    return response_payload
 
-    # 添加元数据
-    trace.metadata["topic"] = req.topic
-    trace.metadata["collection"] = req.collection
-    trace.metadata["model"] = req.model or settings.llm.model
-    trace.metadata["include_background"] = req.include_background
-    trace.metadata["include_facts"] = req.include_facts
-    trace.metadata["include_examples"] = req.include_examples
-    trace.metadata["template_category"] = req.template_category
-    trace.metadata["template_type"] = req.template_type
-    trace.metadata["session_id"] = finalized_conversation.session_id
-    trace.metadata["agent_protocol"] = "lesson_agent_msg_v1"
-    trace.metadata["query_plan"] = dict(query_plan)
-    trace.metadata["execution_plan"] = dict(execution_plan)
-    if req.grade_level:
-        trace.metadata["grade_level"] = req.grade_level
-    if req.learning_style:
-        trace.metadata["learning_style"] = req.learning_style
 
-    if isinstance(review_report_payload, dict):
-        review_must_fix = list(review_report_payload.get("must_fix") or [])
-    else:
-        review_must_fix = list(getattr(review_report_payload, "must_fix", []) or [])
+@app.post("/lesson-plan/tasks", response_model=LessonTaskCreateResponse)
+async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
+    """Create an async lesson-generation task and return immediately."""
+    _task_cleanup()
+    task_id = uuid.uuid4().hex
+    _task_set(
+        task_id,
+        status="queued",
+        progress_stage="queued",
+        created_at=time.time(),
+    )
 
-    trace.record_stage("lesson_agent_complete", {
-        "model": req.model or settings.llm.model,
-        "has_context": len(relevant_results) > 0,
-        "image_count": len(image_resources),
-        "subject": subject,
-        "template_type": resolved_template_type,
-        "planning_mode": execution_plan.get("generation_mode"),
-        "review_must_fix_count": len(review_must_fix),
-        "session_id": finalized_conversation.session_id,
-    })
+    async def _runner() -> None:
+        timeout_sec = float(os.environ.get("LESSON_PLAN_TASK_TIMEOUT_SEC", "180"))
+        _task_set(task_id, status="running", progress_stage="running")
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_generate_lesson_plan_internal, req, request),
+                timeout=timeout_sec,
+            )
+            result_payload = result.model_dump() if hasattr(result, "model_dump") else result.dict()
+            _task_set(
+                task_id,
+                status="succeeded",
+                progress_stage="done",
+                result=result_payload,
+                finished_at=time.time(),
+            )
+        except asyncio.TimeoutError:
+            _task_set(
+                task_id,
+                status="failed",
+                progress_stage="timeout",
+                error={
+                    "code": "LESSON_TIMEOUT",
+                    "message": f"任务超时（>{int(timeout_sec)}s）",
+                    "stage": "lesson_orchestration",
+                },
+                finished_at=time.time(),
+            )
+        except Exception as exc:
+            logger.exception("Async lesson task failed")
+            _task_set(
+                task_id,
+                status="failed",
+                progress_stage="failed",
+                error={
+                    "code": "LESSON_ORCHESTRATION_ERROR",
+                    "message": str(exc)[:280],
+                    "stage": "lesson_orchestration",
+                },
+                finished_at=time.time(),
+            )
 
-    # 保存trace
-    trace.finish()
-    from src.core.trace.trace_collector import TraceCollector
-    TraceCollector().collect(trace)
+    asyncio.create_task(_runner())
+    return LessonTaskCreateResponse(task_id=task_id, status="queued")
 
-    history_records: List[Dict[str, Any]] = []
-    try:
-        lesson_preview = re.sub(r"\s+", " ", lesson_plan_content or "").strip()[:180]
-        request.app.state.history_storage.add_record(
-            session_id=finalized_conversation.session_id,
-            topic=req.topic,
-            template_category=req.template_category,
-            template_label="综合模板" if req.template_category == "comprehensive" else "导学案模板",
-            subject=subject,
-            created_at=finalized_conversation.updated_at,
-            conversation_state=asdict(finalized_conversation),
-            lesson_preview=lesson_preview,
-            lesson_content=lesson_plan_content,
-            planning_mode=execution_plan.get("generation_mode"),
-            used_autonomous_fallback=bool(
-                generation_metadata.get("forced_autonomous_retry_after_refusal")
-                or generation_metadata.get("forced_autonomous_retry_after_review")
-                or execution_plan.get("generation_mode") == "autonomous"
-            ),
-        )
-        history_records = request.app.state.history_storage.list_records(
-            limit=8,
-            session_id=finalized_conversation.session_id,
-        )
-    except Exception:
-        logger.exception("Failed to persist lesson history")
 
-    return LessonPlanResponse(
-        topic=req.topic,
-        subject=subject,
-        lesson_content=lesson_plan_content,
-        additional_resources=citations,
-        image_resources=image_resources,
-        review_report=_to_review_report_response(review_report_payload),
-        conversation_state=asdict(finalized_conversation),
-        history_records=history_records,
-        execution_plan=dict(execution_plan),
-        planning_mode=execution_plan.get("generation_mode"),
-        used_autonomous_fallback=bool(
-            generation_metadata.get("forced_autonomous_retry_after_refusal")
-            or generation_metadata.get("forced_autonomous_retry_after_review")
-            or execution_plan.get("generation_mode") == "autonomous"
-        ),
+@app.get("/lesson-plan/tasks/{task_id}", response_model=LessonTaskStatusResponse)
+async def get_lesson_plan_task(task_id: str):
+    payload = _task_get(task_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    result_obj = None
+    if isinstance(payload.get("result"), dict):
+        try:
+            result_obj = LessonPlanResponse(**payload["result"])
+        except Exception:
+            result_obj = None
+
+    return LessonTaskStatusResponse(
+        task_id=task_id,
+        status=str(payload.get("status") or "unknown"),
+        progress_stage=payload.get("progress_stage"),
+        result=result_obj,
+        error=payload.get("error") if isinstance(payload.get("error"), dict) else None,
     )
