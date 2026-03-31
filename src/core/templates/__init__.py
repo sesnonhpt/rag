@@ -2,9 +2,7 @@
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
-from pathlib import Path
-import json
+from dataclasses import dataclass
 
 from src.libs.llm.base_llm import Message
 
@@ -17,35 +15,13 @@ class TemplateType(Enum):
     COMPREHENSIVE_MASTER = "comprehensive_master"
 
 
-class GradeLevel(Enum):
-    """Grade levels for personalized templates."""
-    PRIMARY = "primary"  # 小学
-    MIDDLE = "middle"    # 初中
-    HIGH = "high"        # 高中
-    COLLEGE = "college"  # 大学
-
-
-class LearningStyle(Enum):
-    """Learning styles for personalized templates."""
-    VISUAL = "visual"      # 视觉型
-    AUDITORY = "auditory"  # 听觉型
-    KINESTHETIC = "kinesthetic"  # 动觉型
-    READ_WRITE = "read_write"    # 读写型
-
-
 @dataclass
 class TemplateConfig:
     """Configuration for template generation."""
     template_type: TemplateType
-    grade_level: Optional[GradeLevel] = None
-    learning_style: Optional[LearningStyle] = None
     include_background: bool = True
     include_facts: bool = True
     include_examples: bool = True
-    include_exercises: bool = False
-    difficulty: str = "medium"  # easy, medium, hard
-    language: str = "zh"  # zh, en
-    custom_instructions: Optional[str] = None
 
 
 class TemplateManager:
@@ -98,42 +74,6 @@ class TemplateManager:
             **kwargs
         )
     
-    def get_available_templates(self) -> Dict[str, List[str]]:
-        """Get all available templates grouped by category.
-        
-        Returns:
-            Dictionary of template categories and their templates
-        """
-        return {
-            "综合模版(增强版)": [
-                "综合模版(增强版)",
-            ],
-            "教学设计模板": [
-                "教学设计",
-            ],
-            "导学案模板": [
-                "标准导学案",
-            ],
-        }
-    
-    def get_template_description(self, template_type: TemplateType) -> str:
-        """Get description for a specific template type.
-        
-        Args:
-            template_type: Template type
-            
-        Returns:
-            Template description
-        """
-        descriptions = {
-            TemplateType.COMPREHENSIVE_MASTER: "综合模版(增强版)：融合教学设计、导学任务、课堂互动、分层训练与配图讲解，适合生成更完整的增强版成稿",
-            TemplateType.TEACHING_DESIGN_MASTER: "教学设计：贴近学校真实教学设计写法，突出教学目标、重难点、教学准备、教学过程与板书设计",
-            TemplateType.GUIDE_MASTER: "标准导学案：自动判断学科并按学校导学案体例生成完整成稿",
-        }
-        
-        return descriptions.get(template_type, "未知模板类型")
-
-
 def get_template_manager() -> TemplateManager:
     """Get singleton instance of TemplateManager."""
     global _template_manager

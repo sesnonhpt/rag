@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any, Callable, List, Optional
 
-from src.core.templates import GradeLevel, LearningStyle, TemplateConfig, TemplateType
+from src.core.templates import TemplateConfig, TemplateType
 from src.libs.llm.base_llm import Message
 
 from .models import ConversationState, LessonAgentAssets, LessonAgentState, LessonReviewReport, QueryPlan
@@ -384,24 +384,6 @@ class LessonAgent:
                     include_facts=self.request.include_facts,
                     include_examples=self.request.include_examples,
                 )
-
-                if getattr(self.request, "grade_level", None):
-                    grade_map = {
-                        "primary": GradeLevel.PRIMARY,
-                        "middle": GradeLevel.MIDDLE,
-                        "high": GradeLevel.HIGH,
-                        "college": GradeLevel.COLLEGE,
-                    }
-                    config.grade_level = grade_map.get(self.request.grade_level, GradeLevel.MIDDLE)
-
-                if getattr(self.request, "learning_style", None):
-                    style_map = {
-                        "visual": LearningStyle.VISUAL,
-                        "auditory": LearningStyle.AUDITORY,
-                        "kinesthetic": LearningStyle.KINESTHETIC,
-                        "read_write": LearningStyle.READ_WRITE,
-                    }
-                    config.learning_style = style_map.get(self.request.learning_style, LearningStyle.VISUAL)
 
                 messages = self.template_manager.build_prompt(
                     config=config,

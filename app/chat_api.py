@@ -30,13 +30,7 @@ from src.core.query_engine.sparse_retriever import create_sparse_retriever
 from src.core.query_engine.reranker import create_core_reranker
 from src.core.settings import load_settings
 from src.core.trace import TraceContext
-from src.core.templates import (
-    TemplateManager, 
-    TemplateConfig, 
-    TemplateType, 
-    GradeLevel, 
-    LearningStyle
-)
+from src.core.templates import TemplateManager
 from src.agents import (
     ConversationAgent,
     LessonHistoryStorage,
@@ -83,15 +77,10 @@ class LessonPlanRequest(BaseModel):
     include_facts: bool = Field(default=True, description="是否包含相关常识")
     include_examples: bool = Field(default=True, description="是否包含教学示例")
     template_category: Optional[str] = Field(default=None, description="模板类别")
-    template_type: Optional[str] = Field(default=None, description="具体模板类型")
-    grade_level: Optional[str] = Field(default=None, description="年级（个性化模板使用）")
-    learning_style: Optional[str] = Field(default=None, description="学习风格（个性化模板使用）")
     conversation_state: Optional[Dict[str, Any]] = Field(default=None, description="轻量会话状态")
 
 
 def _resolve_template_type(req: "LessonPlanRequest") -> Optional[str]:
-    if req.template_type:
-        return req.template_type
     if req.template_category == "guide":
         return "guide_master"
     if req.template_category == "teaching_design":
@@ -1337,16 +1326,11 @@ def _generate_lesson_plan_internal(
     trace.metadata["include_facts"] = req.include_facts
     trace.metadata["include_examples"] = req.include_examples
     trace.metadata["template_category"] = req.template_category
-    trace.metadata["template_type"] = req.template_type
     trace.metadata["session_id"] = finalized_conversation.session_id
     trace.metadata["agent_protocol"] = "lesson_agent_msg_v1"
     trace.metadata["query_plan"] = dict(query_plan)
     trace.metadata["execution_plan"] = dict(execution_plan)
     trace.metadata["fast_mode"] = fast_mode
-    if req.grade_level:
-        trace.metadata["grade_level"] = req.grade_level
-    if req.learning_style:
-        trace.metadata["learning_style"] = req.learning_style
 
     if isinstance(review_report_payload, dict):
         review_must_fix = list(review_report_payload.get("must_fix") or [])
