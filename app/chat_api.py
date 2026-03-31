@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from io import BytesIO
 import json
 import os
 import sys
@@ -12,12 +13,18 @@ from pathlib import Path
 from dataclasses import asdict, is_dataclass
 import re
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from bs4 import BeautifulSoup
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt
 
 # Ensure project root is on sys.path
 _ROOT = Path(__file__).resolve().parent.parent
@@ -163,6 +170,11 @@ class LessonPlanResponse(BaseModel):
     used_autonomous_fallback: bool = False
 
 
+class ExportDocxRequest(BaseModel):
+    title: str = Field(..., min_length=1, description="导出文件标题")
+    content_html: str = Field(..., min_length=1, description="当前教案正文 HTML")
+
+
 class LessonHistoryResponse(BaseModel):
     records: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -274,6 +286,170 @@ def _find_image_file_by_id(image_id: str) -> Optional[Path]:
             return match
 
     return None
+
+
+def _extract_image_path_from_src(src: str, image_storage: Any) -> Optional[Path]:
+    if not src:
+        return None
+
+    cleaned = str(src).strip()
+    if not cleaned:
+        return None
+
+    if cleaned.startswith("/lesson-plan-image/"):
+        image_id = cleaned.rsplit("/", 1)[-1]
+        image_path = image_storage.get_image_path(image_id) if image_storage is not None else None
+        resolved = _resolve_image_file_path(image_path) if image_path else Path()
+        if resolved.exists() and resolved.is_file():
+            return resolved
+        return _find_image_file_by_id(image_id)
+
+    possible_path = _resolve_image_file_path(cleaned)
+    if possible_path.exists() and possible_path.is_file():
+        return possible_path
+    return None
+
+
+def _append_text_paragraph(document: Document, text: str, *, style: Optional[str] = None) -> None:
+    clean = " ".join(str(text or "").split())
+    if not clean:
+        return
+    paragraph = document.add_paragraph(style=style)
+    paragraph.add_run(clean)
+
+
+def _set_docx_style_font(style: Any, east_asia_font: str, western_font: str, size_pt: int, *, bold: bool = False) -> None:
+    font = style.font
+    font.name = western_font
+    font.size = Pt(size_pt)
+    font.bold = bold
+    style.element.rPr.rFonts.set(qn("w:eastAsia"), east_asia_font)
+    style.element.rPr.rFonts.set(qn("w:ascii"), western_font)
+    style.element.rPr.rFonts.set(qn("w:hAnsi"), western_font)
+
+
+def _configure_docx_styles(document: Document) -> None:
+    body_cjk_font = "SimSun"
+    heading_cjk_font = "SimHei"
+    latin_font = "Times New Roman"
+
+    _set_docx_style_font(document.styles["Normal"], body_cjk_font, latin_font, 11)
+    _set_docx_style_font(document.styles["Title"], heading_cjk_font, latin_font, 18, bold=True)
+    _set_docx_style_font(document.styles["Heading 1"], heading_cjk_font, latin_font, 15, bold=True)
+    _set_docx_style_font(document.styles["Heading 2"], heading_cjk_font, latin_font, 13, bold=True)
+    _set_docx_style_font(document.styles["Heading 3"], heading_cjk_font, latin_font, 12, bold=True)
+    _set_docx_style_font(document.styles["List Bullet"], body_cjk_font, latin_font, 11)
+    _set_docx_style_font(document.styles["List Number"], body_cjk_font, latin_font, 11)
+
+
+def _append_image_to_docx(document: Document, src: str, alt_text: str, image_storage: Any) -> None:
+    image_path = _extract_image_path_from_src(src, image_storage)
+    if image_path and image_path.exists():
+        try:
+            paragraph = document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = paragraph.add_run()
+            run.add_picture(str(image_path), width=Inches(3.8))
+            if alt_text:
+                caption = document.add_paragraph()
+                caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                caption.add_run(alt_text)
+        except Exception as e:
+            logger.warning("lesson_docx.skip_image path=%s error=%r", image_path, e)
+            if alt_text:
+                fallback = document.add_paragraph()
+                fallback.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                fallback.add_run(f"[图片未导出] {alt_text}")
+
+
+def _append_node_content(document: Document, node: Any, image_storage: Any, *, style: Optional[str] = None) -> None:
+    text_buffer: List[str] = []
+
+    for child in getattr(node, "children", []):
+        child_name = getattr(child, "name", None)
+        if child_name == "img":
+            _append_text_paragraph(document, " ".join(text_buffer), style=style)
+            text_buffer = []
+            _append_image_to_docx(
+                document,
+                child.get("src", ""),
+                child.get("alt", "").strip(),
+                image_storage,
+            )
+            continue
+
+        if isinstance(child, str):
+            text_buffer.append(child)
+            continue
+
+        child_text = child.get_text(" ", strip=True)
+        if child_text:
+            text_buffer.append(child_text)
+
+    _append_text_paragraph(document, " ".join(text_buffer), style=style)
+
+
+def _render_html_to_docx(document: Document, html: str, image_storage: Any) -> None:
+    soup = BeautifulSoup(html or "", "html.parser")
+    root_nodes = soup.contents if soup.contents else []
+
+    for node in root_nodes:
+        if isinstance(node, str):
+            _append_text_paragraph(document, node)
+            continue
+
+        name = getattr(node, "name", "") or ""
+        text = node.get_text(" ", strip=True)
+
+        if name == "h1":
+            _append_node_content(document, node, image_storage, style="Title")
+            continue
+        if name == "h2":
+            _append_node_content(document, node, image_storage, style="Heading 1")
+            continue
+        if name == "h3":
+            _append_node_content(document, node, image_storage, style="Heading 2")
+            continue
+        if name == "h4":
+            _append_node_content(document, node, image_storage, style="Heading 3")
+            continue
+        if name in {"p", "blockquote", "div"}:
+            _append_node_content(document, node, image_storage)
+            continue
+        if name == "hr":
+            document.add_paragraph("")
+            continue
+        if name in {"ul", "ol"}:
+            list_style = "List Bullet" if name == "ul" else "List Number"
+            for li in node.find_all("li", recursive=False):
+                _append_node_content(document, li, image_storage, style=list_style)
+            continue
+        if name == "img":
+            _append_image_to_docx(
+                document,
+                node.get("src", ""),
+                node.get("alt", "").strip(),
+                image_storage,
+            )
+            continue
+
+        _append_node_content(document, node, image_storage)
+
+
+def _build_docx_bytes(title: str, content_html: str, image_storage: Any) -> bytes:
+    document = Document()
+    section = document.sections[0]
+    section.top_margin = Inches(0.8)
+    section.bottom_margin = Inches(0.8)
+    section.left_margin = Inches(0.9)
+    section.right_margin = Inches(0.9)
+    _configure_docx_styles(document)
+
+    _render_html_to_docx(document, content_html, image_storage)
+
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
 def _normalize_image_caption(caption: Optional[str]) -> Optional[str]:
@@ -1672,6 +1848,42 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
             ),
         ) from e
     return response_payload
+
+
+@app.post("/lesson-plan/export-docx")
+async def export_lesson_plan_docx(req: ExportDocxRequest, request: Request):
+    try:
+        filename = re.sub(r'[\\/:*?"<>|]+', "_", req.title).strip() or "教案"
+        image_storage = getattr(request.app.state, "image_storage", None)
+        docx_bytes = _build_docx_bytes(
+            title=filename,
+            content_html=req.content_html,
+            image_storage=image_storage,
+        )
+    except Exception as e:
+        logger.exception("Lesson DOCX export failed")
+        error_text = str(e).strip() or repr(e)
+        raise HTTPException(
+            status_code=500,
+            detail=_build_api_error_detail(
+                code="LESSON_DOCX_EXPORT_ERROR",
+                message=f"DOCX 导出失败: {error_text}"[:280],
+                stage="lesson_docx_export",
+            ),
+        ) from e
+
+    ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", filename).strip("._") or "lesson-plan"
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_filename}.docx"; '
+            f"filename*=UTF-8''{quote(filename)}.docx"
+        ),
+    }
+    return StreamingResponse(
+        BytesIO(docx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
+    )
 
 
 @app.post("/lesson-plan/stream")

@@ -665,7 +665,7 @@
 
     .markdown-content img {
       display: block;
-      width: min(100%, 780px);
+      width: min(100%, 400px);
       margin: 18px auto;
       border-radius: 18px;
       border: 1px solid rgba(24, 33, 38, 0.08);
@@ -777,31 +777,22 @@
             <label for="model-select">LLM模型</label>
             <select id="model-select">
               <option value="">默认模型 (gemini-2.0-flash)</option>
-              <optgroup label="Gemini 推荐">
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
-                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                <option value="gemini-flash-latest">Gemini Flash Latest</option>
-                <option value="gemini-flash-lite-latest">Gemini Flash Lite Latest</option>
-                <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
-              </optgroup>
-              <optgroup label="Gemma 指令模型">
-                <option value="gemma-3-4b-it">Gemma 3 4B IT</option>
-                <option value="gemma-3-12b-it">Gemma 3 12B IT</option>
-                <option value="gemma-3-27b-it">Gemma 3 27B IT</option>
-              </optgroup>
-              <optgroup label="其他可选">
-                <option value="gpt-4.1-free">GPT-4.1 Free</option>
-                <option value="coding-glm-5-free">Coding GLM-5 Free</option>
-                <option value="gpt-4o">GPT-4o (付费)</option>
-                <option value="gpt-4o-mini">GPT-4o Mini (付费)</option>
-                <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (付费)</option>
-              </optgroup>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+              <option value="gemini-flash-latest">Gemini Flash Latest</option>
+              <option value="gemini-flash-lite-latest">Gemini Flash Lite Latest</option>
+              <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+              <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
+              <option value="gemma-3-4b-it">Gemma 3 4B IT</option>
+              <option value="gemma-3-12b-it">Gemma 3 12B IT</option>
+              <option value="gemma-3-27b-it">Gemma 3 27B IT</option>
+              <option value="gpt-4.1-free">GPT-4.1 Free</option>
+              <option value="coding-glm-5-free">Coding GLM-5 Free</option>
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="gpt-4o-mini">GPT-4o Mini</option>
+              <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
             </select>
-            <small style="color: var(--text-light); display: block; line-height: 1.7; margin-top: 6px;">
-              教案生成更推荐使用 Gemini Flash 系列；embedding 与 robotics 预览模型未放入此处，避免误选。
-            </small>
           </div>
 
           <div class="button-group">
@@ -819,7 +810,10 @@
 
       <div class="result-section" id="result-section" style="display: none;">
         <div class="result-card">
-          <h3 class="result-card-title">生成内容</h3>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px;">
+            <h3 class="result-card-title" style="margin-bottom: 0;">生成内容</h3>
+            <button class="btn btn-secondary" id="export-doc-btn" type="button" disabled>导出 DOCX</button>
+          </div>
           <div class="result-card-content markdown-content" id="lesson-content"></div>
         </div>
 
@@ -850,6 +844,7 @@
     const resultSection = document.getElementById('result-section');
     const lessonContent = document.getElementById('lesson-content');
     const resourcesContent = document.getElementById('resources-content');
+    const exportDocBtn = document.getElementById('export-doc-btn');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingText = document.querySelector('.loading-text');
     const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
@@ -892,8 +887,64 @@
     function showLoading(show) {
       loadingOverlay.style.display = show ? 'flex' : 'none';
       generateBtn.disabled = show;
+      exportDocBtn.disabled = show || !lessonContent.textContent.trim();
       if (!show && loadingText) {
         loadingText.textContent = '正在生成内容，请稍候...';
+      }
+    }
+
+    function sanitizeFilename(value) {
+      return String(value || '教案')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 60) || '教案';
+    }
+
+    async function exportCurrentLessonAsDocx() {
+      const contentText = lessonContent.textContent.trim();
+      if (!contentText) {
+        showError('当前没有可导出的教案内容');
+        return;
+      }
+
+      const exportTitle = sanitizeFilename(topicInput.value || '教案');
+      exportDocBtn.disabled = true;
+
+      try {
+        const response = await fetch('/lesson-plan/export-docx', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            title: exportTitle,
+            content_html: lessonContent.innerHTML,
+          }),
+        });
+
+        if (!response.ok) {
+          let errorText = `导出失败 (${response.status})`;
+          try {
+            const data = await response.json();
+            errorText = formatApiError(data, errorText);
+          } catch {}
+          throw new Error(errorText);
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${exportTitle}.docx`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        showError(`DOCX 导出失败：${error.message}`);
+      } finally {
+        exportDocBtn.disabled = !lessonContent.textContent.trim();
       }
     }
 
@@ -1080,8 +1131,10 @@
       // 渲染生成内容（Markdown格式）
       if (data.lesson_content) {
         lessonContent.innerHTML = marked.parse(data.lesson_content);
+        exportDocBtn.disabled = false;
       } else {
         lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无生成内容</p>';
+        exportDocBtn.disabled = true;
       }
 
       // 渲染参考文档（历史详情可选择隐藏）
@@ -1247,6 +1300,7 @@
       conversationState = null;
       localStorage.removeItem(CONVERSATION_STATE_KEY);
       planningIndicator.textContent = '';
+      exportDocBtn.disabled = true;
     }
 
     historyList.addEventListener('click', (event) => {
@@ -1280,6 +1334,7 @@
 
     generateBtn.addEventListener('click', generateLessonPlan);
     resetBtn.addEventListener('click', resetForm);
+    exportDocBtn.addEventListener('click', exportCurrentLessonAsDocx);
 
     // 按Enter键生成内容
     topicInput.addEventListener('keydown', (e) => {
