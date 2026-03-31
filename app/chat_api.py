@@ -269,6 +269,22 @@ def _resolve_image_file_path(raw_path: Any) -> Path:
     return path_obj
 
 
+def _find_image_file_by_id(image_id: str) -> Optional[Path]:
+    if not image_id:
+        return None
+
+    images_root = _ROOT / "data" / "images"
+    if not images_root.exists():
+        return None
+
+    exact_matches = sorted(images_root.rglob(f"{image_id}.*"))
+    for match in exact_matches:
+        if match.is_file():
+            return match
+
+    return None
+
+
 def _normalize_image_caption(caption: Optional[str]) -> Optional[str]:
     if not caption:
         return None
@@ -1494,10 +1510,24 @@ async def serve_lesson_plan_ui():
 async def serve_lesson_plan_image(image_id: str, request: Request):
     image_storage = request.app.state.image_storage
     image_path = image_storage.get_image_path(image_id)
-    if not image_path:
-        raise HTTPException(status_code=404, detail="Image not found")
+    path = _resolve_image_file_path(image_path) if image_path else Path()
 
-    path = _resolve_image_file_path(image_path)
+    if (not image_path) or (not path.exists()) or (not path.is_file()):
+        fallback = _find_image_file_by_id(image_id)
+        if fallback is None:
+            raise HTTPException(status_code=404, detail="Image not found")
+        path = fallback
+        try:
+            image_storage.register_image(
+                image_id=image_id,
+                file_path=path,
+                collection=path.parent.parent.name if path.parent.parent != path.parent else "default",
+                doc_hash=path.parent.name if path.parent != path else None,
+                page_num=None,
+            )
+        except Exception:
+            logger.warning("lesson_image.reregister_failed image_id=%s path=%s", image_id, path)
+
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Image file not found")
 
@@ -1737,4 +1767,3 @@ async def stream_lesson_plan(req: LessonPlanRequest, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
-
