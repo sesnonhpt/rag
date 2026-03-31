@@ -1317,7 +1317,7 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         trace=trace,
     )
 
-    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "85"))
+    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "300"))
     try:
         orchestration_output = await asyncio.wait_for(
             asyncio.to_thread(
