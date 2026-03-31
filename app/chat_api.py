@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -1316,11 +1317,16 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         trace=trace,
     )
 
+    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "85"))
     try:
-        orchestration_output = orchestrator.run(
-            topic=req.topic,
-            template_category=req.template_category,
-            conversation_state=conversation_state,
+        orchestration_output = await asyncio.wait_for(
+            asyncio.to_thread(
+                orchestrator.run,
+                topic=req.topic,
+                template_category=req.template_category,
+                conversation_state=conversation_state,
+            ),
+            timeout=lesson_timeout_sec,
         )
         execution_plan = dict(orchestration_output["execution_plan"])
         query_plan = dict(orchestration_output["query_plan"])
@@ -1357,6 +1363,17 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
                 "lesson_agent_final_refusal_recovery",
                 {"applied": True},
             )
+    except asyncio.TimeoutError:
+        logger.exception("Lesson orchestration timed out")
+        raise HTTPException(
+            status_code=504,
+            detail=_build_api_error_detail(
+                code="LESSON_TIMEOUT",
+                message=f"生成超时（>{int(lesson_timeout_sec)}s），请重试或切换更快模型",
+                stage="lesson_orchestration",
+                trace_id=trace.trace_id,
+            ),
+        )
     except Exception as e:
         logger.exception("Lesson orchestration failed")
         raise HTTPException(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any, Callable, List, Optional
@@ -138,6 +139,15 @@ class LessonAgent:
     def _review_and_polish(self, state: LessonAgentState) -> None:
         draft = state.final_content or state.draft_content or ""
         if not draft:
+            return
+        review_enabled = str(os.environ.get("LESSON_REVIEW_ENABLED", "true")).strip().lower() not in {"0", "false", "no"}
+        if not review_enabled:
+            state.final_content = self._clean_trailing_english(draft)
+            self.trace.record_stage(
+                "agent_review_and_polish",
+                {"skipped": True, "reason": "LESSON_REVIEW_ENABLED=false"},
+                elapsed_ms=0.0,
+            )
             return
 
         image_count = len(state.assets.image_resources)
