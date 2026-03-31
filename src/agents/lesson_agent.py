@@ -71,7 +71,11 @@ class LessonAgent:
 
         self._retrieve_assets(state, results, image_resources, citations)
         self._generate_draft(state)
-        self._review_and_polish(state)
+        # Temporarily skip the second LLM pass (review/polish) to reduce
+        # end-to-end latency on Render and verify whether it is the main
+        # source of request timeouts. Keep the implementation intact so we
+        # can re-enable it easily after measurement.
+        # self._review_and_polish(state)
         self._insert_images(state)
         self._extract_subject(state)
         return state
