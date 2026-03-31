@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import time
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dataclasses import asdict, is_dataclass
@@ -45,7 +44,6 @@ from src.agents import (
     PlannerAgent,
     QueryAgent,
     RetrieverAgent,
-    LessonTaskStorage,
     WriterReviewerAgent,
 )
 from src.ingestion.storage.bm25_indexer import BM25Indexer
@@ -64,10 +62,7 @@ _GEMINI_GATEWAY_BASE_URL = os.environ.get(
     "GEMINI_GATEWAY_BASE_URL",
     "https://gemini-gateway.xn--7dvnlw2c.top/v1",
 )
-_GEMINI_GATEWAY_API_KEY = os.environ.get(
-    "GEMINI_GATEWAY_API_KEY",
-    "sk-Ch@1-w3nch&^g-gemini-gateway-2025",
-)
+_GEMINI_GATEWAY_API_KEY = os.environ.get("GEMINI_GATEWAY_API_KEY")
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -106,7 +101,7 @@ def _resolve_template_type(req: "LessonPlanRequest") -> Optional[str]:
 
 def _resolve_llm_auth_for_model(model_name: Optional[str], settings: Any) -> tuple[Optional[str], Optional[str]]:
     model = str(model_name or "").strip().lower()
-    if model.startswith(_GEMINI_MODEL_PREFIXES):
+    if model.startswith(_GEMINI_MODEL_PREFIXES) and _GEMINI_GATEWAY_API_KEY:
         return _GEMINI_GATEWAY_API_KEY, _GEMINI_GATEWAY_BASE_URL
     return settings.llm.api_key, settings.llm.base_url
 
@@ -184,19 +179,6 @@ class LessonHistoryResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     components: dict
-
-
-class LessonTaskCreateResponse(BaseModel):
-    task_id: str
-    status: str = "queued"
-
-
-class LessonTaskStatusResponse(BaseModel):
-    task_id: str
-    status: str
-    progress_stage: Optional[str] = None
-    result: Optional[LessonPlanResponse] = None
-    error: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1168,29 +1150,6 @@ def _build_lesson_plan_prompt_fallback(req: "LessonPlanRequest") -> List[Message
 # Lesson task helpers
 # ---------------------------------------------------------------------------
 
-def _task_set(task_id: str, **payload: Any) -> None:
-    storage = payload.pop("_storage")
-    current = storage.get(task_id) or {"task_id": task_id}
-    current.update(payload)
-    storage.upsert(
-        task_id=task_id,
-        status=str(current.get("status") or "queued"),
-        progress_stage=current.get("progress_stage"),
-        result=current.get("result") if isinstance(current.get("result"), dict) else None,
-        error=current.get("error") if isinstance(current.get("error"), dict) else None,
-        created_at=float(current.get("created_at") or time.time()),
-        finished_at=float(current["finished_at"]) if current.get("finished_at") is not None else None,
-    )
-
-
-def _task_get(task_id: str, storage: Any) -> Optional[Dict[str, Any]]:
-    return storage.get(task_id)
-
-
-def _task_cleanup(storage: Any, max_age_seconds: int = 3600) -> None:
-    storage.cleanup(max_age_seconds=max_age_seconds)
-
-
 def _generate_lesson_plan_internal(
     req: LessonPlanRequest,
     request: Request,
@@ -1462,9 +1421,6 @@ async def lifespan(app: FastAPI):
     history_storage = LessonHistoryStorage(
         db_path=str(_ROOT / "data" / "db" / "lesson_history.db"),
     )
-    task_storage = LessonTaskStorage(
-        db_path=str(_ROOT / "data" / "db" / "lesson_tasks.db"),
-    )
 
     app.state.settings = settings
     app.state.hybrid_search = hybrid_search
@@ -1472,7 +1428,6 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.image_storage = image_storage
     app.state.history_storage = history_storage
-    app.state.task_storage = task_storage
     app.state.default_collection = collection
 
     logger.info("Chat API components initialised successfully")
@@ -1783,118 +1738,3 @@ async def stream_lesson_plan(req: LessonPlanRequest, request: Request):
         },
     )
 
-
-@app.post("/lesson-plan/tasks", response_model=LessonTaskCreateResponse)
-async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
-    """Create an async lesson-generation task and return immediately."""
-    task_storage = request.app.state.task_storage
-    _task_cleanup(task_storage)
-    task_id = uuid.uuid4().hex
-    logger.info(
-        "lesson_task.create task_id=%s topic=%s template_category=%s",
-        task_id,
-        req.topic,
-        req.template_category,
-    )
-    _task_set(
-        task_id,
-        _storage=task_storage,
-        status="queued",
-        progress_stage="queued",
-        created_at=time.time(),
-    )
-
-    async def _runner() -> None:
-        timeout_sec = float(os.environ.get("LESSON_PLAN_TASK_TIMEOUT_SEC", "180"))
-        _task_set(task_id, _storage=task_storage, status="running", progress_stage="running")
-        logger.info(
-            "lesson_task.run_start task_id=%s timeout_sec=%s topic=%s",
-            task_id,
-            timeout_sec,
-            req.topic,
-        )
-        try:
-            task_started = time.monotonic()
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_generate_lesson_plan_internal, req, request),
-                timeout=timeout_sec,
-            )
-            result_payload = result.model_dump() if hasattr(result, "model_dump") else result.dict()
-            _task_set(
-                task_id,
-                _storage=task_storage,
-                status="succeeded",
-                progress_stage="done",
-                result=result_payload,
-                finished_at=time.time(),
-            )
-            logger.info(
-                "lesson_task.run_success task_id=%s elapsed_ms=%.1f",
-                task_id,
-                (time.monotonic() - task_started) * 1000,
-            )
-        except asyncio.TimeoutError:
-            _task_set(
-                task_id,
-                _storage=task_storage,
-                status="failed",
-                progress_stage="timeout",
-                error={
-                    "code": "LESSON_TIMEOUT",
-                    "message": f"任务超时（>{int(timeout_sec)}s）",
-                    "stage": "lesson_orchestration",
-                },
-                finished_at=time.time(),
-            )
-            logger.warning(
-                "lesson_task.run_timeout task_id=%s timeout_sec=%s",
-                task_id,
-                timeout_sec,
-            )
-        except Exception as exc:
-            logger.exception("Async lesson task failed")
-            _task_set(
-                task_id,
-                _storage=task_storage,
-                status="failed",
-                progress_stage="failed",
-                error={
-                    "code": "LESSON_ORCHESTRATION_ERROR",
-                    "message": str(exc)[:280],
-                    "stage": "lesson_orchestration",
-                },
-                finished_at=time.time(),
-            )
-
-    asyncio.create_task(_runner())
-    return LessonTaskCreateResponse(task_id=task_id, status="queued")
-
-
-@app.get("/lesson-plan/tasks/{task_id}", response_model=LessonTaskStatusResponse)
-async def get_lesson_plan_task(task_id: str, request: Request):
-    payload = _task_get(task_id, request.app.state.task_storage)
-    if not payload:
-        logger.warning("lesson_task.poll_miss task_id=%s", task_id)
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    logger.info(
-        "lesson_task.poll task_id=%s status=%s progress_stage=%s",
-        task_id,
-        payload.get("status"),
-        payload.get("progress_stage"),
-    )
-
-    result_obj = None
-    if isinstance(payload.get("result"), dict):
-        try:
-            result_obj = LessonPlanResponse(**payload["result"])
-        except Exception:
-            result_obj = None
-
-    return LessonTaskStatusResponse(
-        task_id=task_id,
-        status=str(payload.get("status") or "unknown"),
-        progress_stage=payload.get("progress_stage"),
-        result=result_obj,
-        error=payload.get("error") if isinstance(payload.get("error"), dict) else None,
-    )

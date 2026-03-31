@@ -347,6 +347,7 @@ class LessonAgent:
 
     def _build_generation_messages(self, state: LessonAgentState) -> List[Message]:
         results = state.assets.text_results
+        max_context_results = int(os.environ.get("LESSON_WRITER_MAX_CONTEXT_RESULTS", "8"))
         forced_autonomous = (
             state.execution_plan is not None
             and str(state.execution_plan.generation_mode or "").strip().lower() == "autonomous"
@@ -354,7 +355,7 @@ class LessonAgent:
         has_usable_context = self._has_usable_context_for_topic(self.request.topic, results)
         if forced_autonomous:
             has_usable_context = False
-        effective_results = results if has_usable_context else []
+        effective_results = results[: max(1, max_context_results)] if has_usable_context else []
         effective_images = state.assets.image_resources if has_usable_context else []
 
         self.trace.record_stage(
@@ -364,6 +365,7 @@ class LessonAgent:
                 "usable_context": has_usable_context,
                 "forced_autonomous": forced_autonomous,
                 "effective_result_count": len(effective_results),
+                "max_context_results": max(1, max_context_results),
                 "effective_image_count": len(effective_images),
             },
         )

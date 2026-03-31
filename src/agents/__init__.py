@@ -3,7 +3,6 @@
 from .conversation_agent import ConversationAgent
 from .agent_protocol import AgentMessage
 from .history_storage import LessonHistoryStorage
-from .task_storage import LessonTaskStorage
 from .lesson_agent import LessonAgent
 from .models import (
     ConversationState,
@@ -25,7 +24,6 @@ __all__ = [
     "ExecutionPlan",
     "AgentMessage",
     "LessonHistoryStorage",
-    "LessonTaskStorage",
     "LessonAgent",
     "LessonAgentAssets",
     "LessonOrchestrator",
