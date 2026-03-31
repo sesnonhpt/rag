@@ -239,6 +239,13 @@ def _extract_caption_lookup(metadata: Dict[str, Any]) -> Dict[str, str]:
     return {}
 
 
+def _extract_image_ids_from_text(text: Any) -> List[str]:
+    if not text:
+        return []
+    matches = re.findall(r"\[IMAGE:\s*([^\]\s]+)\s*\]", str(text), flags=re.IGNORECASE)
+    return list(dict.fromkeys(str(match).strip() for match in matches if str(match).strip()))
+
+
 def _sanitize_source_path(source_path: Any) -> str:
     if not source_path:
         return "unknown"
@@ -513,6 +520,7 @@ def _extract_image_resources(
 
         caption_lookup = _extract_caption_lookup(metadata)
         source_path = metadata.get("source_path", "unknown")
+        placeholder_image_ids = _extract_image_ids_from_text(result.text)
 
         for image_info in images:
             if not isinstance(image_info, dict):
@@ -558,6 +566,50 @@ def _extract_image_resources(
                         source=_sanitize_source_path(source_path),
                         page=page_num,
                         caption=caption,
+                    ),
+                )
+            )
+
+        for image_id in placeholder_image_ids:
+            if image_id in seen_ids or image_storage is None:
+                continue
+
+            direct_candidate_count += 1
+            indexed_path = image_storage.get_image_path(str(image_id))
+            if not indexed_path:
+                logger.info(
+                    "lesson_image.placeholder_missing image_id=%s source=%s page=%s",
+                    image_id,
+                    _sanitize_source_path(source_path),
+                    page_num,
+                )
+                continue
+
+            if not _is_effective_lesson_image(caption_lookup.get(str(image_id)), source_path, page_num):
+                continue
+
+            path_obj = Path(indexed_path)
+            if not path_obj.exists():
+                logger.info(
+                    "lesson_image.placeholder_file_missing image_id=%s source=%s page=%s",
+                    image_id,
+                    _sanitize_source_path(source_path),
+                    page_num,
+                )
+                continue
+
+            seen_ids.add(image_id)
+            rank_bonus = max(0, 8 - result_index)
+            direct_kept_count += 1
+            scored_resources.append(
+                (
+                    _score_lesson_image(caption_lookup.get(str(image_id)), page_num) + rank_bonus,
+                    LessonImageResource(
+                        image_id=str(image_id),
+                        url=f"/lesson-plan-image/{image_id}",
+                        source=_sanitize_source_path(source_path),
+                        page=page_num,
+                        caption=_normalize_image_caption(caption_lookup.get(str(image_id))),
                     ),
                 )
             )
