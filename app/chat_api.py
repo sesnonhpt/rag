@@ -21,10 +21,6 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
-from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
-from docx.shared import Inches, Pt
 
 # Ensure project root is on sys.path
 _ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +60,7 @@ _GEMINI_GATEWAY_BASE_URL = os.environ.get(
     "https://gemini-gateway.xn--7dvnlw2c.top/v1",
 )
 _GEMINI_GATEWAY_API_KEY = os.environ.get("GEMINI_GATEWAY_API_KEY")
+_DOCX_IMPORTS: Optional[Dict[str, Any]] = None
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -288,6 +285,31 @@ def _find_image_file_by_id(image_id: str) -> Optional[Path]:
     return None
 
 
+def _get_docx_imports() -> Dict[str, Any]:
+    global _DOCX_IMPORTS
+    if _DOCX_IMPORTS is not None:
+        return _DOCX_IMPORTS
+
+    try:
+        from docx import Document as DocxDocument
+        from docx.enum.text import WD_ALIGN_PARAGRAPH as DocxAlign
+        from docx.oxml.ns import qn as docx_qn
+        from docx.shared import Inches as DocxInches, Pt as DocxPt
+    except ImportError as e:
+        raise RuntimeError(
+            "DOCX 导出依赖缺失，请安装 python-docx 后重试"
+        ) from e
+
+    _DOCX_IMPORTS = {
+        "Document": DocxDocument,
+        "WD_ALIGN_PARAGRAPH": DocxAlign,
+        "qn": docx_qn,
+        "Inches": DocxInches,
+        "Pt": DocxPt,
+    }
+    return _DOCX_IMPORTS
+
+
 def _extract_image_path_from_src(src: str, image_storage: Any) -> Optional[Path]:
     if not src:
         return None
@@ -319,13 +341,14 @@ def _append_text_paragraph(document: Document, text: str, *, style: Optional[str
 
 
 def _set_docx_style_font(style: Any, east_asia_font: str, western_font: str, size_pt: int, *, bold: bool = False) -> None:
+    imports = _get_docx_imports()
     font = style.font
     font.name = western_font
-    font.size = Pt(size_pt)
+    font.size = imports["Pt"](size_pt)
     font.bold = bold
-    style.element.rPr.rFonts.set(qn("w:eastAsia"), east_asia_font)
-    style.element.rPr.rFonts.set(qn("w:ascii"), western_font)
-    style.element.rPr.rFonts.set(qn("w:hAnsi"), western_font)
+    style.element.rPr.rFonts.set(imports["qn"]("w:eastAsia"), east_asia_font)
+    style.element.rPr.rFonts.set(imports["qn"]("w:ascii"), western_font)
+    style.element.rPr.rFonts.set(imports["qn"]("w:hAnsi"), western_font)
 
 
 def _configure_docx_styles(document: Document) -> None:
@@ -343,22 +366,23 @@ def _configure_docx_styles(document: Document) -> None:
 
 
 def _append_image_to_docx(document: Document, src: str, alt_text: str, image_storage: Any) -> None:
+    imports = _get_docx_imports()
     image_path = _extract_image_path_from_src(src, image_storage)
     if image_path and image_path.exists():
         try:
             paragraph = document.add_paragraph()
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
             run = paragraph.add_run()
-            run.add_picture(str(image_path), width=Inches(3.8))
+            run.add_picture(str(image_path), width=imports["Inches"](3.8))
             if alt_text:
                 caption = document.add_paragraph()
-                caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                caption.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
                 caption.add_run(alt_text)
         except Exception as e:
             logger.warning("lesson_docx.skip_image path=%s error=%r", image_path, e)
             if alt_text:
                 fallback = document.add_paragraph()
-                fallback.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                fallback.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
                 fallback.add_run(f"[图片未导出] {alt_text}")
 
 
@@ -437,12 +461,13 @@ def _render_html_to_docx(document: Document, html: str, image_storage: Any) -> N
 
 
 def _build_docx_bytes(title: str, content_html: str, image_storage: Any) -> bytes:
-    document = Document()
+    imports = _get_docx_imports()
+    document = imports["Document"]()
     section = document.sections[0]
-    section.top_margin = Inches(0.8)
-    section.bottom_margin = Inches(0.8)
-    section.left_margin = Inches(0.9)
-    section.right_margin = Inches(0.9)
+    section.top_margin = imports["Inches"](0.8)
+    section.bottom_margin = imports["Inches"](0.8)
+    section.left_margin = imports["Inches"](0.9)
+    section.right_margin = imports["Inches"](0.9)
     _configure_docx_styles(document)
 
     _render_html_to_docx(document, content_html, image_storage)
