@@ -76,6 +76,10 @@ services:
       - key: OBSERVABILITY_TRACE_ENABLED
         value: "false"
 
+      # Lesson 生成优化
+      - key: LESSON_REVIEW_ENABLED
+        value: "false"
+
   # ── Streamlit Dashboard ─────────────────────────────────
   # 独立服务，通过 rag-api 暴露的地址通信
   - type: web
