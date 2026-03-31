@@ -91,7 +91,14 @@ dmypy.json
 .ruff_cache/
 
 # Project-specific
-data/
+data/*
+!data/pdf/
+!data/pdf/**
+!data/images/
+!data/images/**
+!data/db/
+data/db/*
+!data/db/image_index.db
 cache/
 logs/
 *.log
