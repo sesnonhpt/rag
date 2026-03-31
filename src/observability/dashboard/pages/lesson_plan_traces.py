@@ -48,7 +48,9 @@ def render() -> None:
     for idx, trace in enumerate(traces):
         trace_id = trace.get("trace_id", "unknown")
         started = trace.get("started_at", "—")
-        total_ms = trace.get("elapsed_ms")
+        total_ms = trace.get("total_elapsed_ms")
+        if total_ms is None:
+            total_ms = trace.get("elapsed_ms")
         total_label = f"{total_ms:.0f} ms" if total_ms is not None else "—"
         meta = trace.get("metadata", {})
         topic = meta.get("topic", "")
@@ -77,11 +79,15 @@ def render() -> None:
             timings = svc.get_stage_timings(trace)
             stages_by_name = {t["stage_name"]: t for t in timings}
 
-            # 从fusion阶段获取检索结果
+            # 兼容旧版 (fusion/rerank/llm_generation) 与新版 agent waterfall
             fusion_d = (stages_by_name.get("fusion", {}).get("data") or {})
             rerank_d = (stages_by_name.get("rerank", {}).get("data") or {})
+            retriever_output = (
+                (stages_by_name.get("agent_waterfall_retriever_agent", {}).get("data") or {})
+                .get("output", {})
+            )
 
-            retrieval_count = fusion_d.get("result_count", 0)
+            retrieval_count = fusion_d.get("result_count", retriever_output.get("relevant_result_count", 0))
             rerank_count = rerank_d.get("output_count", 0)
 
             rc1, rc2, rc3 = st.columns(3)
@@ -94,8 +100,18 @@ def render() -> None:
 
             st.divider()
 
-            main_stage_names = ("hybrid_search", "rerank", "llm_generation")
-            main_timings = [t for t in timings if t["stage_name"] in main_stage_names]
+            main_stage_names = (
+                "hybrid_search",
+                "rerank",
+                "llm_generation",
+                "agent_waterfall_planner_agent",
+                "agent_waterfall_retriever_agent",
+                "agent_waterfall_writer_reviewer_agent",
+            )
+            main_timings = [
+                t for t in timings
+                if t["stage_name"] in main_stage_names and t.get("elapsed_ms") is not None
+            ]
             if main_timings:
                 st.markdown("#### ⏱️ 阶段耗时")
                 chart_data = {t["stage_name"]: t["elapsed_ms"] for t in main_timings}
@@ -113,6 +129,12 @@ def render() -> None:
             st.markdown("#### 🔍 阶段详情")
 
             tab_defs = []
+            if "agent_waterfall_planner_agent" in stages_by_name:
+                tab_defs.append(("🧭 Planner Agent", "agent_waterfall_planner_agent"))
+            if "agent_waterfall_retriever_agent" in stages_by_name:
+                tab_defs.append(("🔎 Retriever Agent", "agent_waterfall_retriever_agent"))
+            if "agent_waterfall_writer_reviewer_agent" in stages_by_name:
+                tab_defs.append(("✍️ Writer/Reviewer Agent", "agent_waterfall_writer_reviewer_agent"))
             if "fusion" in stages_by_name:
                 tab_defs.append(("🔍 混合检索", "fusion"))
             if "rerank" in stages_by_name:
@@ -130,7 +152,9 @@ def render() -> None:
                         if elapsed is not None:
                             st.caption(f"⏱️ {elapsed:.1f} ms")
 
-                        if key == "fusion":
+                        if key.startswith("agent_waterfall_"):
+                            _render_agent_waterfall_stage(data)
+                        elif key == "fusion":
                             _render_fusion_stage(data)
                         elif key == "rerank":
                             _render_rerank_stage(data)
@@ -198,6 +222,30 @@ def _render_llm_generation_stage(data: Dict[str, Any]) -> None:
 
     if data.get("error"):
         st.error(f"生成失败: {data['error']}")
+
+
+def _render_agent_waterfall_stage(data: Dict[str, Any]) -> None:
+    """Render planner/retriever/writer waterfall stage payload."""
+    agent_name = data.get("agent", "unknown")
+    st.markdown(f"**Agent:** `{agent_name}`")
+
+    message = data.get("message") or {}
+    output = data.get("output") or {}
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("task_id", str(message.get("task_id", "—"))[:8])
+    with c2:
+        st.metric("next_action", message.get("next_action", "—"))
+    with c3:
+        st.metric("constraint_count", message.get("constraint_count", 0))
+
+    if message:
+        st.caption(f"context_keys: {', '.join(message.get('context_keys', [])) or '—'}")
+        st.caption(f"artifact_keys: {', '.join(message.get('artifact_keys', [])) or '—'}")
+
+    if output:
+        st.json(output)
 
 
 def _render_chunk_list(chunks: List[Dict[str, Any]]) -> None:

@@ -164,6 +164,7 @@ class LessonAgent:
             "4. 如果模板类别是“综合模板”，要确保内容像教案而不是知识点总结，并尽量结合“配图1/配图2”等进行讲解。\n"
             "5. 如果模板类别是“导学案模板”，要增强任务驱动、题目驱动和学生可完成性。\n"
             "6. 不要输出审稿意见，不要解释修改原因，只输出修订后的最终成稿。\n"
+            "7. 全文必须使用简体中文，不要出现英文句子、英文总结语或 'Good luck' 这类英文结尾。\n"
         )
         review_prompt += (
             f"\n当前模板类别：{category}\n"
@@ -180,12 +181,12 @@ class LessonAgent:
         start_time = time.time()
         response = self.llm.chat(messages)
         elapsed_ms = (time.time() - start_time) * 1000
-        state.final_content = response.content
+        state.final_content = self._clean_trailing_english(response.content)
 
         if self._looks_like_context_refusal(state.final_content):
             retry_messages = self._build_autonomous_planning_messages(state)
             retry_response = self.llm.chat(retry_messages)
-            state.final_content = retry_response.content
+            state.final_content = self._clean_trailing_english(retry_response.content)
             state.metadata["forced_autonomous_retry_after_review"] = True
 
         self.trace.record_stage(
@@ -401,6 +402,36 @@ class LessonAgent:
             Message(role="system", content=system_prompt),
             Message(role="user", content=f"请直接为主题“{self.request.topic}”生成完整成稿。"),
         ]
+
+    @staticmethod
+    def _clean_trailing_english(content: str) -> str:
+        """Trim common English tail lines that occasionally leak into Chinese lesson output."""
+        text = str(content or "").strip()
+        if not text:
+            return text
+
+        lines = text.splitlines()
+        while lines:
+            tail = lines[-1].strip()
+            if not tail:
+                lines.pop()
+                continue
+            has_ascii_alpha = bool(re.search(r"[A-Za-z]", tail))
+            has_cjk = bool(re.search(r"[\u4e00-\u9fff]", tail))
+            is_english_tail = (
+                has_ascii_alpha
+                and not has_cjk
+                and (
+                    re.search(r"(good\s+luck|remember\s+to|revised\s+lesson\s+plan)", tail, flags=re.IGNORECASE)
+                    or len(re.findall(r"[A-Za-z]", tail)) >= 8
+                )
+            )
+            if is_english_tail:
+                lines.pop()
+                continue
+            break
+
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _resolve_template_enum(template_type_str: str) -> Optional[TemplateType]:

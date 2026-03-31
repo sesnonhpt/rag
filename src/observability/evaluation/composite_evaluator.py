@@ -112,7 +112,8 @@ class CompositeEvaluator(BaseEvaluator):
             RuntimeError: If ALL sub-evaluators fail.
         """
         self.validate_query(query)
-        self.validate_retrieved_chunks(retrieved_chunks)
+        if not isinstance(retrieved_chunks, list):
+            raise ValueError("retrieved_chunks must be a list")
 
         merged: Dict[str, float] = {}
         errors: List[str] = []
@@ -198,6 +199,8 @@ class CompositeEvaluator(BaseEvaluator):
             return []
 
         from src.libs.evaluator.evaluator_factory import EvaluatorFactory
+        from src.libs.evaluator.custom_evaluator import CustomEvaluator
+        from src.observability.evaluation.ragas_evaluator import SUPPORTED_METRICS as RAGAS_SUPPORTED
 
         evaluators: List[BaseEvaluator] = []
         for backend_name in backends:
@@ -213,7 +216,14 @@ class CompositeEvaluator(BaseEvaluator):
                 sub_eval = MagicMock()
                 sub_eval.enabled = True
                 sub_eval.provider = backend_name
-                sub_eval.metrics = getattr(evaluation, "metrics", [])
+                # Filter metrics per backend to avoid unsupported-metric init failures.
+                configured_metrics = [str(m).strip().lower() for m in getattr(evaluation, "metrics", [])]
+                if backend_name == "custom":
+                    sub_eval.metrics = [m for m in configured_metrics if m in CustomEvaluator.SUPPORTED_METRICS]
+                elif backend_name == "ragas":
+                    sub_eval.metrics = [m for m in configured_metrics if m in RAGAS_SUPPORTED]
+                else:
+                    sub_eval.metrics = configured_metrics
                 sub_eval.backends = []  # prevent recursion
                 sub_settings.evaluation = sub_eval
 

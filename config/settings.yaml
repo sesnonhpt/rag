@@ -82,12 +82,16 @@ rerank:
 # Evaluation Configuration
 # =============================================================================
 evaluation:
-  enabled: false
-  provider: "custom"  # Options: ragas, deepeval, custom
+  enabled: true
+  provider: "composite"  # Options: none, custom, ragas, composite
+  backends:
+    - "custom"
+    - "ragas"
   metrics:
     - "hit_rate"
     - "mrr"
     - "faithfulness"
+    - "answer_relevancy"
 
 # =============================================================================
 # Observability Configuration

@@ -257,6 +257,7 @@ class EvaluationSettings:
     enabled: bool
     provider: str
     metrics: List[str]
+    backends: Optional[List[str]] = None
 
 
 @dataclass(frozen=True)
@@ -389,6 +390,9 @@ class Settings:
                 enabled=_require_bool(evaluation, "enabled", "evaluation"),
                 provider=_require_str(evaluation, "provider", "evaluation"),
                 metrics=[str(item) for item in _require_list(evaluation, "metrics", "evaluation")],
+                backends=[str(item) for item in evaluation.get("backends", [])]
+                if isinstance(evaluation.get("backends"), list)
+                else None,
             ),
             observability=ObservabilitySettings(
                 log_level=_require_str(observability, "log_level", "observability"),

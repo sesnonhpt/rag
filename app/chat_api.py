@@ -1,13 +1,4 @@
-"""FastAPI Chat API for Modular RAG MCP Server.
-
-Provides a browser-accessible chat interface backed by the full RAG pipeline:
-HybridSearch (Dense + Sparse + RRF) → optional Rerank → LLM generation.
-
-Endpoints:
-    GET  /         - Serve the Chat UI HTML page
-    GET  /health   - Service health and component status
-    POST /chat     - Execute RAG pipeline and return answer + citations
-"""
+"""FastAPI API for lesson-plan generation and optional RAG chat endpoints."""
 
 from __future__ import annotations
 
@@ -43,17 +34,15 @@ from src.core.templates import (
     GradeLevel, 
     LearningStyle
 )
-from src.agents import ConversationAgent, LessonHistoryStorage, PlannerAgent, QueryAgent, QueryPlan
-from src.agents.lesson_tools import (
-    GenerateLessonDraftRequest,
-    GenerateLessonDraftResponse,
-    LessonToolbox,
-    PlanLessonTaskRequest,
-    PlanLessonTaskResponse,
-    SearchTextChunksRequest,
-    SearchTextChunksResponse,
+from src.agents import (
+    ConversationAgent,
+    LessonHistoryStorage,
+    LessonOrchestrator,
+    PlannerAgent,
+    QueryAgent,
+    RetrieverAgent,
+    WriterReviewerAgent,
 )
-from src.agents.tool_runtime import ToolRuntime, ToolRuntimeError, ToolSpec
 from src.ingestion.storage.bm25_indexer import BM25Indexer
 from src.ingestion.storage.image_storage import ImageStorage
 from src.libs.embedding.embedding_factory import EmbeddingFactory
@@ -131,29 +120,6 @@ def _build_api_error_detail(
     if trace_id:
         payload["trace_id"] = trace_id
     return payload
-
-
-def _map_tool_runtime_error(exc: ToolRuntimeError, *, stage: str, trace_id: Optional[str]) -> Dict[str, Any]:
-    if exc.code == "validation_error":
-        return _build_api_error_detail(
-            code="TOOL_VALIDATION_ERROR",
-            message=f"{stage}参数校验失败，请稍后重试",
-            stage=stage,
-            trace_id=trace_id,
-        )
-    if exc.code == "timeout_error":
-        return _build_api_error_detail(
-            code="TOOL_TIMEOUT",
-            message=f"{stage}超时，请稍后重试",
-            stage=stage,
-            trace_id=trace_id,
-        )
-    return _build_api_error_detail(
-        code="TOOL_EXECUTION_ERROR",
-        message=f"{stage}失败，请稍后重试",
-        stage=stage,
-        trace_id=trace_id,
-    )
 
 
 class Citation(BaseModel):
@@ -847,15 +813,42 @@ def _integrate_images_into_markdown(
                 break
 
     remaining = [
-        image for idx, image in enumerate(image_resources, start=1)
+        (idx, image)
+        for idx, image in enumerate(image_resources, start=1)
         if idx not in inserted_indices
     ]
     if remaining:
-        appendix = _build_comprehensive_image_markdown(remaining)
-        if appendix:
-            content = "\n".join(lines).rstrip()
-            content = f"{content}\n\n{appendix}"
-            return _remove_dangling_image_references(content)
+        # Prefer in-body insertion: distribute unreferenced images across section anchors.
+        # This avoids all images being appended to the end when the model didn't mention 配图N.
+        section_anchor_indexes = [
+            i + 1
+            for i, line in enumerate(lines)
+            if re.match(r"^\s*(#{1,6}\s+|\d+[\.、]\s+|[一二三四五六七八九十]+[、\.]\s+)", line.strip())
+        ]
+
+        if not section_anchor_indexes:
+            # Fallback: choose evenly spaced insertion points in the body.
+            total = max(len(lines), 1)
+            section_anchor_indexes = [
+                min(int((k + 1) * total / (len(remaining) + 1)), len(lines))
+                for k in range(len(remaining))
+            ]
+
+        # Deduplicate and keep stable order
+        dedup_anchors: List[int] = []
+        for anchor in section_anchor_indexes:
+            if anchor not in dedup_anchors:
+                dedup_anchors.append(anchor)
+        section_anchor_indexes = dedup_anchors or [len(lines)]
+
+        # Spread images across anchors (round-robin), keeping global image numbering.
+        inserted_offset = 0
+        for item_idx, (global_index, image) in enumerate(remaining):
+            anchor = section_anchor_indexes[item_idx % len(section_anchor_indexes)]
+            insert_at = max(0, min(anchor + inserted_offset, len(lines)))
+            block = [""] + _format_image_markdown_block(image, global_index).splitlines() + [""]
+            lines[insert_at:insert_at] = block
+            inserted_offset += len(block)
 
     return _remove_dangling_image_references("\n".join(lines))
 
@@ -976,6 +969,7 @@ def _build_lesson_plan_prompt(topic: str, contexts: List[Any], include_backgroun
                 f"你是一名经验丰富的教师，擅长准备详细、深入的教案。请基于以下上下文内容，为主题'{topic}'生成一份详细的教案。\n"
                 "请以上下文内容为主要依据，同时允许结合通用学科知识、课堂经验和教学设计方法做合理拓展。\n"
                 "不要伪造具体出处、页码或事实来源；如果上下文不足，可补充教学性内容，但请避免编造可核验细节。\n"
+                "最终输出必须为简体中文，不要包含英文句子或英文结尾。\n"
                 "首先，请根据主题内容推断这属于哪个学科（如物理、化学、生物、数学、语文、英语、历史、地理等），并在教案开头明确指出。\n\n"
                 "请按照以下结构组织教案：\n\n"
                 f"{instructions_text}\n\n"
@@ -1023,6 +1017,7 @@ def _build_lesson_plan_prompt_fallback(req: "LessonPlanRequest") -> List[Message
             content=(
                 f"你是一名经验丰富的教师，擅长准备详细、深入的教案。当前知识库中没有找到与主题'{req.topic}'相关的内容，\n"
                 "请基于你自己的知识与教学经验为该主题生成一份详细的教案，并主动补充更有教学价值的延伸内容。\n\n"
+                "最终输出必须为简体中文，不要包含英文句子或英文结尾。\n"
                 "首先，请根据主题内容推断这属于哪个学科（如物理、化学、生物、数学、语文、英语、历史、地理等），并在教案开头明确指出。\n\n"
                 "请按照以下结构组织教案：\n\n"
                 f"{instructions_text}\n\n"
@@ -1111,17 +1106,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
-    html_file = _STATIC_DIR / "index.html"
+    html_file = _STATIC_DIR / "lesson-plan.html"
     if not html_file.exists():
         raise HTTPException(status_code=404, detail="UI file not found")
-    return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
-
-
-@app.get("/chat.html", response_class=HTMLResponse)
-async def serve_chat_ui():
-    html_file = _STATIC_DIR / "chat.html"
-    if not html_file.exists():
-        raise HTTPException(status_code=404, detail="Chat UI file not found")
     return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
 
 
@@ -1293,187 +1280,67 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
 
     top_k = 15  # 教案需要更多的上下文信息
     trace = TraceContext(trace_type="lesson_plan")
+    resolved_template_type = _resolve_template_type(req)
     conversation_agent = ConversationAgent()
     planner_agent = PlannerAgent(llm=llm)
     query_agent = QueryAgent()
     conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
-    toolbox = LessonToolbox(
-        planner_agent=planner_agent,
-        query_agent=query_agent,
-        conversation_state=conversation_state,
+    retriever_agent = RetrieverAgent(
         hybrid_search=hybrid_search,
         reranker=reranker,
         trace=trace,
+        top_k=top_k,
+        prioritize_visual_results=_prioritize_visual_results,
+        relevance_check=_is_result_relevant_to_topic,
+        extract_image_resources=_extract_image_resources,
+        sanitize_source_path=_sanitize_source_path,
+        image_storage=request.app.state.image_storage,
+        collection=req.collection,
+    )
+    writer_reviewer_agent = WriterReviewerAgent(
         llm=llm,
         template_manager=TemplateManager(),
+        trace=trace,
         request=req,
+        resolved_template_type=resolved_template_type,
         build_default_prompt=_build_lesson_plan_prompt,
         build_fallback_prompt=_build_lesson_plan_prompt_fallback,
         integrate_images=_integrate_images_into_markdown,
     )
-    runtime = ToolRuntime()
-    runtime.register(
-        "plan_lesson_task",
-        ToolSpec(
-            request_model=PlanLessonTaskRequest,
-            response_model=PlanLessonTaskResponse,
-            handler=toolbox.plan_lesson_task,
-            retry=1,
-            timeout_seconds=20.0,
-        ),
-    )
-    runtime.register(
-        "search_text_chunks",
-        ToolSpec(
-            request_model=SearchTextChunksRequest,
-            response_model=SearchTextChunksResponse,
-            handler=toolbox.search_text_chunks,
-            retry=1,
-            timeout_seconds=30.0,
-        ),
-    )
-    runtime.register(
-        "generate_lesson_draft",
-        ToolSpec(
-            request_model=GenerateLessonDraftRequest,
-            response_model=GenerateLessonDraftResponse,
-            handler=toolbox.generate_lesson_draft,
-            retry=1,
-            timeout_seconds=60.0,
-        ),
+    orchestrator = LessonOrchestrator(
+        planner_agent=planner_agent,
+        query_agent=query_agent,
+        retriever_agent=retriever_agent,
+        writer_reviewer_agent=writer_reviewer_agent,
+        conversation_agent=conversation_agent,
+        trace=trace,
     )
 
     try:
-        planning_response = runtime.invoke(
-            "plan_lesson_task",
-            {
-                "topic": req.topic,
-                "template_category": req.template_category,
-                "conversation_state": req.conversation_state,
-            },
-            trace=trace,
+        orchestration_output = orchestrator.run(
+            topic=req.topic,
+            template_category=req.template_category,
+            conversation_state=conversation_state,
         )
-    except ToolRuntimeError as exc:
-        logger.exception("plan_lesson_task failed")
-        raise HTTPException(
-            status_code=500,
-            detail=_map_tool_runtime_error(exc, stage="lesson_planning", trace_id=trace.trace_id),
-        ) from exc
+        execution_plan = dict(orchestration_output["execution_plan"])
+        query_plan = dict(orchestration_output["query_plan"])
+        relevant_results = list(orchestration_output["results"] or [])
+        image_resources = list(orchestration_output["image_resources"] or [])
+        lesson_plan_content = str(orchestration_output["lesson_plan_content"] or "")
+        subject = orchestration_output.get("subject")
+        review_report_payload = orchestration_output.get("review_report")
+        review_notes = list(orchestration_output.get("review_notes") or [])
+        generation_metadata = dict(orchestration_output.get("generation_metadata") or {})
+        finalized_conversation = orchestration_output["conversation_state"]
+        citations = [
+            Citation(
+                source=str(item.get("source") or "unknown"),
+                score=float(item.get("score") or 0.0),
+                text=str(item.get("text") or ""),
+            )
+            for item in (orchestration_output.get("citations") or [])
+        ]
 
-    execution_plan = planning_response.execution_plan
-    query_plan = planning_response.query_plan
-    conversation_agent.apply_plan_to_state(conversation_state, execution_plan)
-    trace.record_stage(
-        "planner_agent_plan",
-        {
-            "plan_version": execution_plan.get("plan_version"),
-            "generation_mode": execution_plan.get("generation_mode"),
-            "need_images": execution_plan.get("need_images"),
-            "subject_guess": execution_plan.get("subject_guess"),
-            "query_focus_count": len(execution_plan.get("query_focus") or []),
-        },
-    )
-
-    # 添加元数据
-    trace.metadata["topic"] = req.topic
-    trace.metadata["collection"] = req.collection
-    trace.metadata["model"] = req.model or settings.llm.model
-    trace.metadata["include_background"] = req.include_background
-    trace.metadata["include_facts"] = req.include_facts
-    trace.metadata["include_examples"] = req.include_examples
-    trace.metadata["template_category"] = req.template_category
-    trace.metadata["template_type"] = req.template_type
-    trace.metadata["session_id"] = conversation_state.session_id
-    trace.metadata["query_plan"] = dict(query_plan)
-    trace.metadata["execution_plan"] = dict(execution_plan)
-    if req.grade_level:
-        trace.metadata["grade_level"] = req.grade_level
-    if req.learning_style:
-        trace.metadata["learning_style"] = req.learning_style
-
-    # 1. 搜索工具
-    try:
-        search_response = runtime.invoke(
-            "search_text_chunks",
-            {
-                "query_plan": query_plan,
-                "top_k": top_k,
-            },
-            trace=trace,
-        )
-    except ToolRuntimeError as exc:
-        logger.exception("search_text_chunks failed")
-        raise HTTPException(
-            status_code=500,
-            detail=_map_tool_runtime_error(exc, stage="lesson_retrieval", trace_id=trace.trace_id),
-        ) from exc
-    raw_results = _prioritize_visual_results(search_response.results, query_plan)[:top_k]
-    relevant_results = [
-        result for result in raw_results
-        if _is_result_relevant_to_topic(req.topic, result)
-    ]
-    trace.record_stage(
-        "query_agent_prioritize_visual_results",
-        {
-            "enabled": bool(query_plan.get("image_focus", False)),
-            "raw_result_count": len(raw_results),
-            "relevant_result_count": len(relevant_results),
-            "search_query_count": len(query_plan.get("search_queries") or []),
-        },
-    )
-
-    # 3. Build citations
-    citations = [
-        Citation(
-            source=_sanitize_source_path((r.metadata or {}).get("source_path", "unknown")),
-            score=round(r.score, 4),
-            text=(r.text or "")[:200],
-        )
-        for r in relevant_results
-    ]
-    trace.record_stage(
-        "lesson_reference_filtering",
-        {
-            "raw_result_count": len(raw_results),
-            "relevant_result_count": len(relevant_results),
-            "filtered_citation_count": len(citations),
-        },
-    )
-    image_resources = _extract_image_resources(
-        relevant_results,
-        image_storage=request.app.state.image_storage,
-        collection=req.collection,
-    )
-
-    # 4. Agent generation for lesson plan
-    try:
-        resolved_template_type = _resolve_template_type(req)
-        generation_response = runtime.invoke(
-            "generate_lesson_draft",
-            {
-                "topic": req.topic,
-                "results": relevant_results,
-                "image_resources": image_resources,
-                "citations": citations,
-                "query_plan": query_plan,
-                "execution_plan": execution_plan,
-                "conversation_state": asdict(conversation_state),
-                "resolved_template_type": resolved_template_type,
-            },
-            trace=trace,
-        )
-        lesson_plan_content = generation_response.lesson_plan_content
-        subject = generation_response.subject
-        review_report_payload = generation_response.review_report
-        review_notes = generation_response.review_notes
-        generation_metadata = generation_response.metadata
-        finalized_conversation = conversation_agent.finalize_state(
-            conversation_state,
-            subject=subject,
-            review_notes=review_notes,
-            query_plan=QueryPlan(**query_plan),
-            execution_plan=execution_plan,
-        )
         if _looks_like_lesson_refusal(lesson_plan_content):
             recovery_messages = [
                 Message(
@@ -1491,16 +1358,39 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
                 {"applied": True},
             )
     except Exception as e:
-        logger.exception("LLM generation failed for lesson plan")
+        logger.exception("Lesson orchestration failed")
         raise HTTPException(
             status_code=500,
             detail=_build_api_error_detail(
-                code="LLM_SERVICE_ERROR",
-                message=f"LLM 服务异常: {str(e)}"[:280],
-                stage="lesson_generation",
+                code="LESSON_ORCHESTRATION_ERROR",
+                message=f"教案编排失败: {str(e)}"[:280],
+                stage="lesson_orchestration",
                 trace_id=trace.trace_id,
             ),
         ) from e
+
+    # 添加元数据
+    trace.metadata["topic"] = req.topic
+    trace.metadata["collection"] = req.collection
+    trace.metadata["model"] = req.model or settings.llm.model
+    trace.metadata["include_background"] = req.include_background
+    trace.metadata["include_facts"] = req.include_facts
+    trace.metadata["include_examples"] = req.include_examples
+    trace.metadata["template_category"] = req.template_category
+    trace.metadata["template_type"] = req.template_type
+    trace.metadata["session_id"] = finalized_conversation.session_id
+    trace.metadata["agent_protocol"] = "lesson_agent_msg_v1"
+    trace.metadata["query_plan"] = dict(query_plan)
+    trace.metadata["execution_plan"] = dict(execution_plan)
+    if req.grade_level:
+        trace.metadata["grade_level"] = req.grade_level
+    if req.learning_style:
+        trace.metadata["learning_style"] = req.learning_style
+
+    if isinstance(review_report_payload, dict):
+        review_must_fix = list(review_report_payload.get("must_fix") or [])
+    else:
+        review_must_fix = list(getattr(review_report_payload, "must_fix", []) or [])
 
     trace.record_stage("lesson_agent_complete", {
         "model": req.model or settings.llm.model,
@@ -1509,7 +1399,7 @@ async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
         "subject": subject,
         "template_type": resolved_template_type,
         "planning_mode": execution_plan.get("generation_mode"),
-        "review_must_fix_count": len((review_report_payload or {}).get("must_fix") or []),
+        "review_must_fix_count": len(review_must_fix),
         "session_id": finalized_conversation.session_id,
     })
 

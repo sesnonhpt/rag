@@ -6,6 +6,7 @@ It is designed for fast regression checks and sanity validation.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from src.libs.evaluator.base_evaluator import BaseEvaluator
@@ -69,17 +70,29 @@ class CustomEvaluator(BaseEvaluator):
             Dictionary of metric name to float value.
         """
         self.validate_query(query)
-        self.validate_retrieved_chunks(retrieved_chunks)
+        if not isinstance(retrieved_chunks, list):
+            raise ValueError("retrieved_chunks must be a list")
 
-        retrieved_ids = self._extract_ids(retrieved_chunks, label="retrieved_chunks")
-        ground_truth_ids = self._extract_ground_truth_ids(ground_truth)
+        ground_truth_targets = self._extract_ground_truth_targets(ground_truth)
+        ground_truth_ids = list(ground_truth_targets.get("ids") or [])
+        ground_truth_sources = list(ground_truth_targets.get("sources") or [])
+
+        if ground_truth_ids:
+            retrieved_items = self._extract_ids(retrieved_chunks, label="retrieved_chunks")
+            expected_items = ground_truth_ids
+        elif ground_truth_sources:
+            retrieved_items = self._extract_sources(retrieved_chunks, label="retrieved_chunks")
+            expected_items = ground_truth_sources
+        else:
+            retrieved_items = self._extract_ids(retrieved_chunks, label="retrieved_chunks")
+            expected_items = []
 
         results: Dict[str, float] = {}
 
         if "hit_rate" in self.metrics:
-            results["hit_rate"] = self._compute_hit_rate(retrieved_ids, ground_truth_ids)
+            results["hit_rate"] = self._compute_hit_rate(retrieved_items, expected_items)
         if "mrr" in self.metrics:
-            results["mrr"] = self._compute_mrr(retrieved_ids, ground_truth_ids)
+            results["mrr"] = self._compute_mrr(retrieved_items, expected_items)
 
         return results
 
@@ -92,23 +105,71 @@ class CustomEvaluator(BaseEvaluator):
             return []
         return [str(metric) for metric in metrics]
 
-    def _extract_ground_truth_ids(self, ground_truth: Optional[Any]) -> List[str]:
-        """Extract ground truth ids from various input shapes."""
+    def _extract_ground_truth_targets(self, ground_truth: Optional[Any]) -> Dict[str, List[str]]:
+        """Extract ground truth targets from various input shapes."""
         if ground_truth is None:
-            return []
+            return {"ids": [], "sources": []}
         if isinstance(ground_truth, str):
-            return [ground_truth]
+            return {"ids": [ground_truth], "sources": []}
         if isinstance(ground_truth, dict):
+            ids: List[str] = []
+            sources: List[str] = []
             if "ids" in ground_truth and isinstance(ground_truth["ids"], list):
-                return self._extract_ids(ground_truth["ids"], label="ground_truth.ids")
-            return self._extract_ids([ground_truth], label="ground_truth")
+                ids = self._extract_ids(ground_truth["ids"], label="ground_truth.ids")
+            if "sources" in ground_truth and isinstance(ground_truth["sources"], list):
+                sources = self._normalise_sources(ground_truth["sources"])
+            if ids or sources:
+                return {"ids": ids, "sources": sources}
+            return {"ids": self._extract_ids([ground_truth], label="ground_truth"), "sources": []}
         if isinstance(ground_truth, list):
-            return self._extract_ids(ground_truth, label="ground_truth")
+            return {"ids": self._extract_ids(ground_truth, label="ground_truth"), "sources": []}
 
         raise ValueError(
             f"Unsupported ground_truth type: {type(ground_truth).__name__}. "
             "Expected str, dict, list, or None."
         )
+
+    def _extract_sources(self, items: Iterable[Any], label: str) -> List[str]:
+        """Extract normalized source file names from retrieved chunks."""
+        sources: List[str] = []
+        for index, item in enumerate(items):
+            source_path: Optional[str] = None
+            if isinstance(item, dict):
+                metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+                source_path = metadata.get("source_path") or item.get("source_path")
+            else:
+                metadata = getattr(item, "metadata", None)
+                if isinstance(metadata, dict):
+                    source_path = metadata.get("source_path")
+                if source_path is None and hasattr(item, "source_path"):
+                    source_path = str(getattr(item, "source_path"))
+
+            normalized = self._normalise_single_source(source_path)
+            if normalized:
+                sources.append(normalized)
+                continue
+            raise ValueError(
+                f"Unable to extract source from {label}[{index}] of type "
+                f"{type(item).__name__}"
+            )
+        return sources
+
+    def _normalise_sources(self, values: Iterable[Any]) -> List[str]:
+        out: List[str] = []
+        for value in values:
+            normalized = self._normalise_single_source(value)
+            if normalized:
+                out.append(normalized)
+        return out
+
+    @staticmethod
+    def _normalise_single_source(value: Any) -> str:
+        if value is None:
+            return ""
+        raw = str(value).strip()
+        if not raw:
+            return ""
+        return Path(raw.replace("\\", "/")).name.lower()
 
     def _extract_ids(self, items: Iterable[Any], label: str) -> List[str]:
         """Extract ids from a list of items."""
@@ -127,6 +188,15 @@ class CustomEvaluator(BaseEvaluator):
                         f"Missing id field in {label}[{index}]. "
                         f"Expected one of {', '.join(self._ID_FIELDS)}"
                     )
+                continue
+            if hasattr(item, "chunk_id"):
+                ids.append(str(getattr(item, "chunk_id")))
+                continue
+            if hasattr(item, "doc_id"):
+                ids.append(str(getattr(item, "doc_id")))
+                continue
+            if hasattr(item, "document_id"):
+                ids.append(str(getattr(item, "document_id")))
                 continue
             if hasattr(item, "id"):
                 ids.append(str(getattr(item, "id")))

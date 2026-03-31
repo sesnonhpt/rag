@@ -286,11 +286,11 @@ class EvalRunner:
         qr.generated_answer = answer
 
         # Step 3: Build ground truth
-        ground_truth = (
-            {"ids": test_case.expected_chunk_ids}
-            if test_case.expected_chunk_ids
-            else None
-        )
+        ground_truth = None
+        if test_case.expected_chunk_ids:
+            ground_truth = {"ids": test_case.expected_chunk_ids}
+        elif test_case.expected_sources:
+            ground_truth = {"sources": test_case.expected_sources}
 
         # Step 4: Evaluate
         try:

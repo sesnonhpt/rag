@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -78,16 +79,19 @@ class TraceService:
         """
         stages = trace.get("stages", [])
         timings: List[Dict[str, Any]] = []
-        for s in stages:
+        for idx, s in enumerate(stages):
             # The raw stage dict has: stage, timestamp, data (dict), elapsed_ms
             # Extract the inner 'data' dict directly rather than flattening
             stage_data = s.get("data", {})
             if not isinstance(stage_data, dict):
                 stage_data = {}
+            elapsed_ms = s.get("elapsed_ms")
+            if elapsed_ms is None:
+                elapsed_ms = self._infer_elapsed_from_next_stage(stages, idx)
             timings.append(
                 {
                     "stage_name": s.get("stage"),
-                    "elapsed_ms": s.get("elapsed_ms", 0),
+                    "elapsed_ms": elapsed_ms,
                     "data": stage_data,
                 }
             )
@@ -116,3 +120,29 @@ class TraceService:
                 except json.JSONDecodeError:
                     logger.debug("Skipping malformed trace line: %s", line[:80])
         return traces
+
+    @staticmethod
+    def _parse_iso_ts(value: Any) -> Optional[datetime]:
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text)
+        except Exception:
+            return None
+
+    def _infer_elapsed_from_next_stage(self, stages: List[Dict[str, Any]], idx: int) -> Optional[float]:
+        if idx < 0 or idx >= len(stages) - 1:
+            return None
+        cur = self._parse_iso_ts(stages[idx].get("timestamp"))
+        nxt = self._parse_iso_ts(stages[idx + 1].get("timestamp"))
+        if cur is None or nxt is None:
+            return None
+        delta_ms = (nxt - cur).total_seconds() * 1000.0
+        if delta_ms < 0:
+            return None
+        return round(delta_ms, 2)
