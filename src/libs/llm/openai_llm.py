@@ -208,7 +208,7 @@ class OpenAILLM(BaseLLM):
         }
         
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=180.0) as client:
                 response = client.post(url, json=payload, headers=headers)
                 
                 if response.status_code != 200:
@@ -220,7 +220,7 @@ class OpenAILLM(BaseLLM):
                 return response.json()
         except httpx.TimeoutException as e:
             raise OpenAILLMError(
-                f"[OpenAI] Request timed out after 60 seconds"
+                f"[OpenAI] Request timed out after 180 seconds"
             ) from e
         except httpx.RequestError as e:
             raise OpenAILLMError(
