@@ -13,7 +13,7 @@ from pathlib import Path
 from dataclasses import asdict, is_dataclass
 import re
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -318,6 +318,10 @@ def _extract_image_path_from_src(src: str, image_storage: Any) -> Optional[Path]
     if not cleaned:
         return None
 
+    parsed = urlparse(cleaned)
+    path_part = parsed.path or cleaned
+    cleaned = path_part.strip()
+
     if cleaned.startswith("/lesson-plan-image/"):
         image_id = cleaned.rsplit("/", 1)[-1]
         image_path = image_storage.get_image_path(image_id) if image_storage is not None else None
@@ -365,6 +369,28 @@ def _configure_docx_styles(document: Document) -> None:
     _set_docx_style_font(document.styles["List Number"], body_cjk_font, latin_font, 11)
 
 
+def _build_docx_compatible_image_stream(image_path: Path) -> Optional[BytesIO]:
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        logger.warning("lesson_docx.pillow_missing path=%s", image_path)
+        return None
+
+    try:
+        with Image.open(image_path) as image:
+            normalized = ImageOps.exif_transpose(image)
+            if normalized.mode not in {"RGB", "L"}:
+                normalized = normalized.convert("RGB")
+
+            buffer = BytesIO()
+            normalized.save(buffer, format="PNG")
+            buffer.seek(0)
+            return buffer
+    except Exception as e:
+        logger.warning("lesson_docx.convert_image_failed path=%s error=%r", image_path, e)
+        return None
+
+
 def _append_image_to_docx(document: Document, src: str, alt_text: str, image_storage: Any) -> None:
     imports = _get_docx_imports()
     image_path = _extract_image_path_from_src(src, image_storage)
@@ -379,7 +405,26 @@ def _append_image_to_docx(document: Document, src: str, alt_text: str, image_sto
                 caption.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
                 caption.add_run(alt_text)
         except Exception as e:
-            logger.warning("lesson_docx.skip_image path=%s error=%r", image_path, e)
+            logger.warning("lesson_docx.direct_image_failed path=%s error=%r", image_path, e)
+            converted_stream = _build_docx_compatible_image_stream(image_path)
+            if converted_stream is not None:
+                try:
+                    paragraph = document.add_paragraph()
+                    paragraph.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
+                    run = paragraph.add_run()
+                    run.add_picture(converted_stream, width=imports["Inches"](3.8))
+                    if alt_text:
+                        caption = document.add_paragraph()
+                        caption.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
+                        caption.add_run(alt_text)
+                    return
+                except Exception as converted_error:
+                    logger.warning(
+                        "lesson_docx.converted_image_failed path=%s error=%r",
+                        image_path,
+                        converted_error,
+                    )
+
             if alt_text:
                 fallback = document.add_paragraph()
                 fallback.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
