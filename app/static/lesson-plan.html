@@ -832,6 +832,7 @@
     const lessonContent = document.getElementById('lesson-content');
     const resourcesContent = document.getElementById('resources-content');
     const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingText = document.querySelector('.loading-text');
     const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
     const HISTORY_STORAGE_KEY = 'lesson_plan_history_records';
     const historyList = document.getElementById('history-list');
@@ -871,6 +872,15 @@
     function showLoading(show) {
       loadingOverlay.style.display = show ? 'flex' : 'none';
       generateBtn.disabled = show;
+      if (!show && loadingText) {
+        loadingText.textContent = '正在生成内容，请稍候...';
+      }
+    }
+
+    function setLoadingText(text) {
+      if (loadingText) {
+        loadingText.textContent = text;
+      }
     }
 
     function showError(message) {
@@ -1107,6 +1117,41 @@
       }
     }
 
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function pollLessonTask(taskId) {
+      const maxAttempts = 120;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const response = await fetch(`/lesson-plan/tasks/${encodeURIComponent(taskId)}`);
+        if (!response.ok) {
+          let errorText = `任务查询失败 (${response.status})`;
+          try {
+            const data = await response.json();
+            errorText = formatApiError(data, errorText);
+          } catch {}
+          throw new Error(errorText);
+        }
+
+        const payload = await response.json();
+        if (payload.status === 'succeeded' && payload.result) {
+          return payload.result;
+        }
+
+        if (payload.status === 'failed') {
+          const errorText = payload.error?.message || '生成任务失败，请重试';
+          throw new Error(errorText);
+        }
+
+        const stageText = payload.progress_stage ? `当前阶段：${payload.progress_stage}` : '正在处理中';
+        setLoadingText(`正在生成内容，请稍候... ${stageText}`);
+        await sleep(2000);
+      }
+
+      throw new Error('任务等待超时，请稍后重试');
+    }
+
     async function generateLessonPlan() {
       const topic = topicInput.value.trim();
       if (!topic) {
@@ -1127,7 +1172,8 @@
           conversation_state: conversationState,
         };
 
-        const response = await fetch('/lesson-plan', {
+        setLoadingText('正在创建生成任务...');
+        const response = await fetch('/lesson-plan/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
@@ -1143,7 +1189,14 @@
           return;
         }
 
-        const data = await response.json();
+        const task = await response.json();
+        if (!task.task_id) {
+          showError('任务创建失败，请重试');
+          return;
+        }
+
+        setLoadingText('任务已创建，正在生成内容...');
+        const data = await pollLessonTask(task.task_id);
         conversationState = data.conversation_state || null;
         if (conversationState) {
           localStorage.setItem(CONVERSATION_STATE_KEY, JSON.stringify(conversationState));
