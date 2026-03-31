@@ -113,6 +113,16 @@ class PdfLoader(BaseLoader):
             "doc_type": "pdf",
             "doc_hash": doc_hash,
         }
+
+        # Record page count early so downstream chunking can switch strategies
+        # for long paginated documents such as textbooks.
+        if PYMUPDF_AVAILABLE:
+            try:
+                pdf_doc = fitz.open(path)
+                metadata["page_count"] = len(pdf_doc)
+                pdf_doc.close()
+            except Exception as e:
+                logger.warning(f"Failed to read page count for {path}: {e}")
         
         # Extract title from first heading if available
         title = self._extract_title(text_content)

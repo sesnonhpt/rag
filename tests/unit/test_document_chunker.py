@@ -46,6 +46,9 @@ def fake_settings():
     settings.splitter.provider = "fake"
     settings.splitter.chunk_size = 100
     settings.splitter.overlap = 0
+    settings.ingestion = Mock()
+    settings.ingestion.chunk_size = 100
+    settings.ingestion.chunk_overlap = 0
     return settings
 
 
@@ -402,3 +405,56 @@ def test_end_to_end_smoke(chunker, sample_document):
         
         # Type requirements
         assert isinstance(chunk, Chunk)
+
+
+def test_long_document_uses_structured_chunking(fake_settings, monkeypatch):
+    """Long paginated documents should chunk by structure and keep page metadata."""
+    from src.libs.splitter import splitter_factory
+
+    def mock_create(settings):
+        return FakeSplitter()
+
+    monkeypatch.setattr(splitter_factory.SplitterFactory, "create", mock_create)
+    fake_settings.ingestion.chunk_size = 500
+
+    document = Document(
+        id="doc_textbook",
+        text=(
+            "## Page 1\n"
+            "第一章\n"
+            "运动的描述\n"
+            "1\n"
+            "质点 参考系\n"
+            "第一节内容。\n\n"
+            "## Page 2\n"
+            "继续讲解第一节。\n\n"
+            "## Page 3\n"
+            "2\n"
+            "时间 位移\n"
+            "第二节内容。"
+        ),
+        metadata={
+            "source_path": "data/pdf/textbook.pdf",
+            "doc_type": "pdf",
+            "page_count": 134,
+        },
+    )
+
+    chunker_long = DocumentChunker(fake_settings)
+    chunks = chunker_long.split_document(document)
+
+    assert len(chunks) == 2
+
+    first = chunks[0].metadata
+    assert first["chapter"] == "第一章 运动的描述"
+    assert first["section"] == "1. 质点 参考系"
+    assert first["page_start"] == 1
+    assert first["page_end"] == 2
+    assert first["page_num"] == 1
+
+    second = chunks[1].metadata
+    assert second["chapter"] == "第一章 运动的描述"
+    assert second["section"] == "2. 时间 位移"
+    assert second["page_start"] == 3
+    assert second["page_end"] == 3
+    assert second["page_num"] == 3
