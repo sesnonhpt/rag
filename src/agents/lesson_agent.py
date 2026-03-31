@@ -154,6 +154,37 @@ class LessonAgent:
 
         image_count = len(state.assets.image_resources)
         category = state.template_category or "lesson"
+        review_mode = self._resolve_review_mode()
+
+        if review_mode == "light":
+            messages = [
+                Message(
+                    role="system",
+                    content=(
+                        "你是一名资深教研员，请把下面的教案初稿快速润色成更像真实教师成稿的版本。"
+                        "要求：保留原有结构，不要大改篇幅；增强课堂推进感、任务感和讲解感；"
+                        "如果是综合模板且已有配图，请自然保留配图讲解位；"
+                        "只输出最终成稿，全文必须为简体中文。"
+                    ),
+                ),
+                Message(role="user", content=draft),
+            ]
+            start_time = time.time()
+            response = self.llm.chat(messages)
+            elapsed_ms = (time.time() - start_time) * 1000
+            state.final_content = self._clean_trailing_english(response.content)
+            state.review_notes = []
+            self.trace.record_stage(
+                "agent_review_and_polish",
+                {
+                    "template_category": category,
+                    "image_count": image_count,
+                    "mode": "light",
+                },
+                elapsed_ms=elapsed_ms,
+            )
+            return
+
         review_report = self._assess_draft(draft, category, image_count)
         state.review_report = review_report
         state.review_notes = list(review_report.must_fix or review_report.issues)
@@ -212,11 +243,22 @@ class LessonAgent:
                     "structure": review_report.structure_score,
                     "multimodal": review_report.multimodal_score,
                 },
+                "mode": "full",
                 "must_fix_count": len(review_report.must_fix),
                 "forced_autonomous_retry_after_review": bool(state.metadata.get("forced_autonomous_retry_after_review")),
             },
             elapsed_ms=elapsed_ms,
         )
+
+    def _resolve_review_mode(self) -> str:
+        configured = str(os.environ.get("LESSON_REVIEW_MODE", "auto")).strip().lower()
+        if configured in {"off", "light", "full"}:
+            return configured
+
+        model_name = str(getattr(self.request, "model", "") or "").lower()
+        if any(token in model_name for token in ["flash-lite", "flash", "mini"]):
+            return "light"
+        return "full"
 
     def _assess_draft(
         self,

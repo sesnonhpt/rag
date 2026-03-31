@@ -115,6 +115,10 @@ def _is_fast_mode_enabled() -> bool:
     return str(os.environ.get("LESSON_FAST_MODE", "false")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_planner_llm_enabled() -> bool:
+    return str(os.environ.get("LESSON_PLANNER_USE_LLM", "false")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _build_api_error_detail(
     *,
     code: str,
@@ -260,6 +264,27 @@ def _sanitize_source_path(source_path: Any) -> str:
         return "/" + normalized[relative_data_index:]
 
     return Path(normalized).name or "unknown"
+
+
+def _resolve_image_file_path(raw_path: Any) -> Path:
+    path_obj = Path(str(raw_path or ""))
+    if path_obj.exists():
+        return path_obj
+
+    normalized = str(raw_path or "").replace("\\", "/")
+    data_images_index = normalized.find("/data/images/")
+    if data_images_index != -1:
+        remapped = _ROOT / normalized[data_images_index + 1 :]
+        if remapped.exists():
+            return remapped
+
+    relative_index = normalized.find("data/images/")
+    if relative_index != -1:
+        remapped = _ROOT / normalized[relative_index:]
+        if remapped.exists():
+            return remapped
+
+    return path_obj
 
 
 def _normalize_image_caption(caption: Optional[str]) -> Optional[str]:
@@ -536,14 +561,12 @@ def _extract_image_resources(
             if not _is_effective_lesson_image(caption, source_path, page_num, image_info=image_info):
                 continue
 
-            path_obj = Path(image_path)
-            if not path_obj.is_absolute():
-                path_obj = (_ROOT / image_path).resolve()
+            path_obj = _resolve_image_file_path(image_path)
 
             if not path_obj.exists() and image_storage is not None:
                 indexed_path = image_storage.get_image_path(str(image_id))
                 if indexed_path:
-                    path_obj = Path(indexed_path)
+                    path_obj = _resolve_image_file_path(indexed_path)
 
             if not path_obj.exists():
                 logger.info(
@@ -588,7 +611,7 @@ def _extract_image_resources(
             if not _is_effective_lesson_image(caption_lookup.get(str(image_id)), source_path, page_num):
                 continue
 
-            path_obj = Path(indexed_path)
+            path_obj = _resolve_image_file_path(indexed_path)
             if not path_obj.exists():
                 logger.info(
                     "lesson_image.placeholder_file_missing image_id=%s source=%s page=%s",
@@ -651,7 +674,7 @@ def _extract_image_resources(
             if not _is_effective_lesson_image(None, file_path, page_num):
                 continue
 
-            path_obj = Path(file_path)
+            path_obj = _resolve_image_file_path(file_path)
             if not path_obj.exists():
                 continue
 
@@ -1224,7 +1247,7 @@ def _generate_lesson_plan_internal(
     trace = TraceContext(trace_type="lesson_plan")
     resolved_template_type = _resolve_template_type(req)
     conversation_agent = ConversationAgent()
-    planner_agent = PlannerAgent(llm=None if fast_mode else llm)
+    planner_agent = PlannerAgent(llm=llm if (not fast_mode and _is_planner_llm_enabled()) else None)
     query_agent = QueryAgent()
     conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
     retriever_agent = RetrieverAgent(
@@ -1519,7 +1542,7 @@ async def serve_lesson_plan_image(image_id: str, request: Request):
     if not image_path:
         raise HTTPException(status_code=404, detail="Image not found")
 
-    path = Path(image_path)
+    path = _resolve_image_file_path(image_path)
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Image file not found")
 

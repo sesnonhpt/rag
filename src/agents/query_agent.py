@@ -32,7 +32,6 @@ class QueryAgent:
         else:
             search_queries.append(f"{topic} {base_suffix} 课堂活动 案例")
             search_queries.append(f"{topic} 结构图 流程图 示意图 实验结果 图表")
-            search_queries.append(f"{topic} 图片 图示 图解 模型结构 网络结构")
             image_queries.append(f"{topic} 结构图 流程图 示意图")
             image_queries.append(f"{topic} 实验结果 图表 对比图")
             image_queries.append(f"{topic} 图解 模型结构 特征图")
@@ -50,7 +49,7 @@ class QueryAgent:
 
         return QueryPlan(
             user_query=topic,
-            search_queries=dedup_search[:4],
+            search_queries=dedup_search[:3],
             image_queries=dedup_image[:3],
             intent="lesson_generation" if category == "comprehensive" else "guide_generation",
             image_focus=image_focus,
