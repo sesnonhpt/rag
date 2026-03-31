@@ -105,3 +105,12 @@ traces.jsonl
 .env.*.local
 secrets.yaml
 nonexistent_traces.jsonl/
+
+
+.agent
+.claude
+.kiro
+.venv
+.github
+.vscode
+

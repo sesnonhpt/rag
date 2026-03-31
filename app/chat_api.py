@@ -110,6 +110,10 @@ def _resolve_llm_auth_for_model(model_name: Optional[str], settings: Any) -> tup
     return settings.llm.api_key, settings.llm.base_url
 
 
+def _is_fast_mode_enabled() -> bool:
+    return str(os.environ.get("LESSON_FAST_MODE", "false")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _build_api_error_detail(
     *,
     code: str,
@@ -1075,10 +1079,20 @@ def _task_cleanup(storage: Any, max_age_seconds: int = 3600) -> None:
 
 
 def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> LessonPlanResponse:
+    started = time.monotonic()
     state = request.app.state
     settings = state.settings
     hybrid_search = state.hybrid_search
     reranker = state.reranker
+    fast_mode = _is_fast_mode_enabled()
+    logger.info(
+        "lesson_plan.internal_start topic=%s template_category=%s model=%s fast_mode=%s collection=%s",
+        req.topic,
+        req.template_category,
+        req.model or state.settings.llm.model,
+        fast_mode,
+        req.collection,
+    )
 
     # 动态切换模型
     if req.model:
@@ -1102,11 +1116,11 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
     else:
         llm = state.llm
 
-    top_k = 15  # 教案需要更多的上下文信息
+    top_k = int(os.environ.get("LESSON_FAST_TOP_K", "8")) if fast_mode else 15
     trace = TraceContext(trace_type="lesson_plan")
     resolved_template_type = _resolve_template_type(req)
     conversation_agent = ConversationAgent()
-    planner_agent = PlannerAgent(llm=llm)
+    planner_agent = PlannerAgent(llm=None if fast_mode else llm)
     query_agent = QueryAgent()
     conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
     retriever_agent = RetrieverAgent(
@@ -1120,6 +1134,9 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
         sanitize_source_path=_sanitize_source_path,
         image_storage=request.app.state.image_storage,
         collection=req.collection,
+        enable_rerank=not fast_mode,
+        enable_image_extraction=not fast_mode,
+        max_search_queries=2 if fast_mode else None,
     )
     writer_reviewer_agent = WriterReviewerAgent(
         llm=llm,
@@ -1139,11 +1156,29 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
         conversation_agent=conversation_agent,
         trace=trace,
     )
+    trace.metadata["fast_mode"] = fast_mode
+    if fast_mode:
+        trace.record_stage(
+            "lesson_fast_mode",
+            {
+                "enabled": True,
+                "planner_llm_disabled": True,
+                "rerank_disabled": True,
+                "image_extraction_disabled": True,
+                "top_k": top_k,
+                "max_search_queries": 2,
+            },
+        )
 
     orchestration_output = orchestrator.run(
         topic=req.topic,
         template_category=req.template_category,
         conversation_state=conversation_state,
+    )
+    logger.info(
+        "lesson_plan.orchestration_done elapsed_ms=%.1f topic=%s",
+        (time.monotonic() - started) * 1000,
+        req.topic,
     )
     execution_plan = dict(orchestration_output["execution_plan"])
     query_plan = dict(orchestration_output["query_plan"])
@@ -1194,6 +1229,7 @@ def _generate_lesson_plan_internal(req: LessonPlanRequest, request: Request) -> 
     trace.metadata["agent_protocol"] = "lesson_agent_msg_v1"
     trace.metadata["query_plan"] = dict(query_plan)
     trace.metadata["execution_plan"] = dict(execution_plan)
+    trace.metadata["fast_mode"] = fast_mode
     if req.grade_level:
         trace.metadata["grade_level"] = req.grade_level
     if req.learning_style:
@@ -1529,6 +1565,12 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
     task_storage = request.app.state.task_storage
     _task_cleanup(task_storage)
     task_id = uuid.uuid4().hex
+    logger.info(
+        "lesson_task.create task_id=%s topic=%s template_category=%s",
+        task_id,
+        req.topic,
+        req.template_category,
+    )
     _task_set(
         task_id,
         _storage=task_storage,
@@ -1540,7 +1582,14 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
     async def _runner() -> None:
         timeout_sec = float(os.environ.get("LESSON_PLAN_TASK_TIMEOUT_SEC", "180"))
         _task_set(task_id, _storage=task_storage, status="running", progress_stage="running")
+        logger.info(
+            "lesson_task.run_start task_id=%s timeout_sec=%s topic=%s",
+            task_id,
+            timeout_sec,
+            req.topic,
+        )
         try:
+            task_started = time.monotonic()
             result = await asyncio.wait_for(
                 asyncio.to_thread(_generate_lesson_plan_internal, req, request),
                 timeout=timeout_sec,
@@ -1554,6 +1603,11 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
                 result=result_payload,
                 finished_at=time.time(),
             )
+            logger.info(
+                "lesson_task.run_success task_id=%s elapsed_ms=%.1f",
+                task_id,
+                (time.monotonic() - task_started) * 1000,
+            )
         except asyncio.TimeoutError:
             _task_set(
                 task_id,
@@ -1566,6 +1620,11 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
                     "stage": "lesson_orchestration",
                 },
                 finished_at=time.time(),
+            )
+            logger.warning(
+                "lesson_task.run_timeout task_id=%s timeout_sec=%s",
+                task_id,
+                timeout_sec,
             )
         except Exception as exc:
             logger.exception("Async lesson task failed")
@@ -1590,7 +1649,15 @@ async def create_lesson_plan_task(req: LessonPlanRequest, request: Request):
 async def get_lesson_plan_task(task_id: str, request: Request):
     payload = _task_get(task_id, request.app.state.task_storage)
     if not payload:
+        logger.warning("lesson_task.poll_miss task_id=%s", task_id)
         raise HTTPException(status_code=404, detail="Task not found")
+
+    logger.info(
+        "lesson_task.poll task_id=%s status=%s progress_stage=%s",
+        task_id,
+        payload.get("status"),
+        payload.get("progress_stage"),
+    )
 
     result_obj = None
     if isinstance(payload.get("result"), dict):

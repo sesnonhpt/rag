@@ -23,6 +23,9 @@ class RetrieverAgent:
         sanitize_source_path: Callable[[Any], str],
         image_storage: Any,
         collection: str,
+        enable_rerank: bool = True,
+        enable_image_extraction: bool = True,
+        max_search_queries: int | None = None,
     ) -> None:
         self.hybrid_search = hybrid_search
         self.reranker = reranker
@@ -34,6 +37,9 @@ class RetrieverAgent:
         self.sanitize_source_path = sanitize_source_path
         self.image_storage = image_storage
         self.collection = collection
+        self.enable_rerank = enable_rerank
+        self.enable_image_extraction = enable_image_extraction
+        self.max_search_queries = max_search_queries
 
     def run(self, message: AgentMessage) -> AgentMessage:
         query_plan = message.artifacts.get("query_plan") or {}
@@ -42,6 +48,8 @@ class RetrieverAgent:
         search_queries = list(query_plan.get("search_queries") or [])
         if not search_queries:
             search_queries = [str(query_plan.get("user_query") or topic)]
+        if self.max_search_queries is not None:
+            search_queries = search_queries[: max(1, self.max_search_queries)]
 
         per_query_top_k = max(6, min(self.top_k, (self.top_k // max(1, len(search_queries))) + 3))
         merged_results: List[Any] = []
@@ -68,7 +76,7 @@ class RetrieverAgent:
                 merged_results.append(item)
 
         merged_results = merged_results[: self.top_k]
-        if merged_results and self.reranker.is_enabled:
+        if merged_results and self.enable_rerank and self.reranker.is_enabled:
             rerank_result = self.reranker.rerank(
                 query=str(query_plan.get("user_query") or topic),
                 results=merged_results,
@@ -90,11 +98,13 @@ class RetrieverAgent:
                 }
             )
 
-        image_resources = self.extract_image_resources(
-            relevant_results,
-            image_storage=self.image_storage,
-            collection=self.collection,
-        )
+        image_resources = []
+        if self.enable_image_extraction:
+            image_resources = self.extract_image_resources(
+                relevant_results,
+                image_storage=self.image_storage,
+                collection=self.collection,
+            )
 
         message.artifacts["raw_results"] = raw_results
         message.artifacts["relevant_results"] = relevant_results

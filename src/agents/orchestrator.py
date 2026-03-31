@@ -6,7 +6,11 @@ from dataclasses import asdict
 import time
 from typing import Any, Dict, Optional
 
+from src.observability.logger import get_logger
+
 from .agent_protocol import AgentMessage
+
+logger = get_logger(__name__)
 
 
 class LessonOrchestrator:
@@ -36,6 +40,7 @@ class LessonOrchestrator:
         template_category: Optional[str],
         conversation_state: Any,
     ) -> Dict[str, Any]:
+        overall_started = time.monotonic()
         message = AgentMessage(
             goal=f"生成主题“{topic}”的高质量教学内容",
             context={
@@ -49,6 +54,12 @@ class LessonOrchestrator:
             next_action="plan",
         )
         self._record_waterfall("orchestrator_start", message, output=None)
+        logger.info(
+            "lesson_orchestrator.start topic=%s template_category=%s session_id=%s",
+            topic,
+            template_category or "comprehensive",
+            getattr(conversation_state, "session_id", None),
+        )
 
         planner_started = time.monotonic()
         execution_plan = self.planner_agent.plan(
@@ -76,6 +87,13 @@ class LessonOrchestrator:
             },
             elapsed_ms=(time.monotonic() - planner_started) * 1000,
         )
+        logger.info(
+            "lesson_orchestrator.planner_done elapsed_ms=%.1f generation_mode=%s need_images=%s search_queries=%s",
+            (time.monotonic() - planner_started) * 1000,
+            execution_plan.generation_mode,
+            execution_plan.need_images,
+            len(query_plan.search_queries or []),
+        )
 
         self.conversation_agent.apply_plan_to_state(conversation_state, message.artifacts["execution_plan"])
 
@@ -99,6 +117,14 @@ class LessonOrchestrator:
                 "image_count": len(message.artifacts.get("image_resources") or []),
             },
             elapsed_ms=(time.monotonic() - retriever_started) * 1000,
+        )
+        logger.info(
+            "lesson_orchestrator.retriever_done elapsed_ms=%.1f raw_results=%s relevant_results=%s citations=%s images=%s",
+            (time.monotonic() - retriever_started) * 1000,
+            len(message.artifacts.get("raw_results") or []),
+            len(message.artifacts.get("relevant_results") or []),
+            len(message.artifacts.get("citations") or []),
+            len(message.artifacts.get("image_resources") or []),
         )
 
         writer_started = time.monotonic()
@@ -127,6 +153,14 @@ class LessonOrchestrator:
             },
             elapsed_ms=(time.monotonic() - writer_started) * 1000,
         )
+        logger.info(
+            "lesson_orchestrator.writer_done elapsed_ms=%.1f has_content=%s subject=%s review_notes=%s must_fix=%s",
+            (time.monotonic() - writer_started) * 1000,
+            bool(writer_output.get("lesson_plan_content")),
+            writer_output.get("subject"),
+            len(writer_output.get("review_notes") or []),
+            must_fix_count,
+        )
 
         finalized_conversation = self.conversation_agent.finalize_state(
             conversation_state,
@@ -134,6 +168,14 @@ class LessonOrchestrator:
             review_notes=writer_output.get("review_notes") or [],
             query_plan=query_plan,
             execution_plan=execution_plan,
+        )
+
+        total_elapsed_ms = (time.monotonic() - overall_started) * 1000
+        logger.info(
+            "lesson_orchestrator.complete elapsed_ms=%.1f topic=%s session_id=%s",
+            total_elapsed_ms,
+            topic,
+            getattr(finalized_conversation, "session_id", None),
         )
 
         return {
