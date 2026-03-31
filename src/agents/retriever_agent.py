@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List
 
+from src.observability.logger import get_logger
+
 from .agent_protocol import AgentMessage
+
+logger = get_logger(__name__)
 
 
 class RetrieverAgent:
@@ -105,6 +109,14 @@ class RetrieverAgent:
                 image_storage=self.image_storage,
                 collection=self.collection,
             )
+        logger.info(
+            "lesson_retriever.images topic=%s enabled=%s relevant_results=%s image_resources=%s collection=%s",
+            topic,
+            self.enable_image_extraction,
+            len(relevant_results),
+            len(image_resources),
+            self.collection,
+        )
 
         message.artifacts["raw_results"] = raw_results
         message.artifacts["relevant_results"] = relevant_results

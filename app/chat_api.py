@@ -492,6 +492,10 @@ def _extract_image_resources(
     scored_resources: List[tuple[int, LessonImageResource]] = []
     doc_hashes = []
     preferred_pages: Dict[str, List[int]] = {}
+    direct_candidate_count = 0
+    direct_kept_count = 0
+    indexed_candidate_count = 0
+    indexed_kept_count = 0
 
     for result_index, result in enumerate(results):
         metadata = result.metadata or {}
@@ -514,6 +518,7 @@ def _extract_image_resources(
             if not isinstance(image_info, dict):
                 continue
 
+            direct_candidate_count += 1
             image_id = image_info.get("id")
             image_path = image_info.get("path")
             page_num = image_info.get("page") or metadata.get("page_num")
@@ -527,11 +532,23 @@ def _extract_image_resources(
             if not path_obj.is_absolute():
                 path_obj = (_ROOT / image_path).resolve()
 
+            if not path_obj.exists() and image_storage is not None:
+                indexed_path = image_storage.get_image_path(str(image_id))
+                if indexed_path:
+                    path_obj = Path(indexed_path)
+
             if not path_obj.exists():
+                logger.info(
+                    "lesson_image.direct_missing image_id=%s source=%s page=%s",
+                    image_id,
+                    _sanitize_source_path(source_path),
+                    page_num,
+                )
                 continue
 
             seen_ids.add(image_id)
             rank_bonus = max(0, 8 - result_index)
+            direct_kept_count += 1
             scored_resources.append(
                 (
                     _score_lesson_image(caption, page_num, image_info=image_info) + rank_bonus,
@@ -566,7 +583,14 @@ def _extract_image_resources(
         except Exception:
             indexed_images = []
 
+        if not indexed_images:
+            try:
+                indexed_images = image_storage.list_images(doc_hash=doc_hash)
+            except Exception:
+                indexed_images = []
+
         for indexed in indexed_images:
+            indexed_candidate_count += 1
             image_id = indexed.get("image_id")
             file_path = indexed.get("file_path")
             page_num = indexed.get("page_num")
@@ -590,6 +614,7 @@ def _extract_image_resources(
                     page_bonus = 6
                 elif page_distance == 2:
                     page_bonus = 3
+            indexed_kept_count += 1
             scored_resources.append(
                 (
                     _score_lesson_image(None, page_num) + page_bonus,
@@ -610,7 +635,19 @@ def _extract_image_resources(
             item[1].image_id,
         )
     )
-    return [resource for _, resource in scored_resources[:max_images]]
+    final_resources = [resource for _, resource in scored_resources[:max_images]]
+    logger.info(
+        "lesson_image.extract results=%s doc_hashes=%s direct_candidates=%s direct_kept=%s indexed_candidates=%s indexed_kept=%s final=%s collection=%s",
+        len(results),
+        len(doc_hashes),
+        direct_candidate_count,
+        direct_kept_count,
+        indexed_candidate_count,
+        indexed_kept_count,
+        len(final_resources),
+        collection,
+    )
+    return final_resources
 
 
 def _score_result_for_visual_lesson(result: Any, query_plan: Any) -> float:
