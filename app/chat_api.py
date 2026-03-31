@@ -94,6 +94,8 @@ def _resolve_template_type(req: "LessonPlanRequest") -> Optional[str]:
         return req.template_type
     if req.template_category == "guide":
         return "guide_master"
+    if req.template_category == "teaching_design":
+        return "teaching_design_master"
     if req.template_category == "comprehensive":
         return "comprehensive_master"
     return None
@@ -800,7 +802,7 @@ def _prioritize_visual_results(results: List[Any], query_plan: Any) -> List[Any]
 def _extract_topic_terms_for_filter(topic: str) -> List[str]:
     raw_terms = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]{2,}", str(topic or ""))
     stop_terms = {
-        "教案", "模板", "综合模板", "导学案", "综合教学模板", "教学", "内容", "主题",
+        "教案", "模板", "综合模板", "导学案", "综合教学模板", "教学设计", "教学", "内容", "主题",
         "lesson", "guide", "template", "teaching",
     }
     terms: List[str] = []
@@ -1374,7 +1376,11 @@ def _generate_lesson_plan_internal(
             session_id=finalized_conversation.session_id,
             topic=req.topic,
             template_category=req.template_category,
-            template_label="综合模板" if req.template_category == "comprehensive" else "导学案模板",
+            template_label=(
+                "综合模版(增强版)"
+                if req.template_category == "comprehensive"
+                else ("教学设计" if req.template_category == "teaching_design" else "导学案模板")
+            ),
             subject=subject,
             created_at=finalized_conversation.updated_at,
             conversation_state=asdict(finalized_conversation),

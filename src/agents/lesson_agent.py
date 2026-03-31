@@ -126,7 +126,7 @@ class LessonAgent:
         content = state.final_content or state.draft_content or ""
         usable_context = state.metadata.get("usable_context", True)
         effective_images = state.assets.image_resources if usable_context else []
-        if self.resolved_template_type == "comprehensive_master" and effective_images:
+        if self.resolved_template_type in {"comprehensive_master", "teaching_design_master"} and effective_images:
             content = self.integrate_images(content, effective_images)
 
         state.final_content = content
@@ -134,7 +134,7 @@ class LessonAgent:
             "agent_integrate_images",
             {
                 "inserted_image_candidates": len(effective_images),
-                "applied": self.resolved_template_type == "comprehensive_master" and bool(effective_images),
+                "applied": self.resolved_template_type in {"comprehensive_master", "teaching_design_master"} and bool(effective_images),
             },
         )
 
@@ -163,7 +163,7 @@ class LessonAgent:
                     content=(
                         "你是一名资深教研员，请把下面的教案初稿快速润色成更像真实教师成稿的版本。"
                         "要求：保留原有结构，不要大改篇幅；增强课堂推进感、任务感和讲解感；"
-                        "如果是综合模板且已有配图，请自然保留配图讲解位；"
+                        "如果是教学设计或综合模版(增强版)且已有配图，请自然保留配图讲解位；"
                         "只输出最终成稿，全文必须为简体中文。"
                     ),
                 ),
@@ -204,10 +204,11 @@ class LessonAgent:
             "1. 优先解决“必须修复项”，其次解决一般问题。\n"
             "2. 避免资料摘要口吻，增强课堂感和教学组织感。\n"
             "3. 允许在不伪造具体出处的前提下，补充合理的教学性发散内容，例如案例、类比、误区提醒、活动组织语。\n"
-            "4. 如果模板类别是“综合模板”，要确保内容像教案而不是知识点总结，并尽量结合“配图1/配图2”等进行讲解。\n"
+            "4. 如果模板类别是“教学设计”或“综合模版(增强版)”，要确保内容像教案而不是知识点总结，并尽量结合“配图1/配图2”等进行讲解。\n"
             "5. 如果模板类别是“导学案模板”，要增强任务驱动、题目驱动和学生可完成性。\n"
-            "6. 不要输出审稿意见，不要解释修改原因，只输出修订后的最终成稿。\n"
-            "7. 全文必须使用简体中文，不要出现英文句子、英文总结语或 'Good luck' 这类英文结尾。\n"
+            "6. 如果模板类别是“综合模版(增强版)”，要同时保留教师组织感、学生任务感、互动设计和分层训练。\n"
+            "7. 不要输出审稿意见，不要解释修改原因，只输出修订后的最终成稿。\n"
+            "8. 全文必须使用简体中文，不要出现英文句子、英文总结语或 'Good luck' 这类英文结尾。\n"
         )
         review_prompt += (
             f"\n当前模板类别：{category}\n"
@@ -284,7 +285,7 @@ class LessonAgent:
             "1. 是否像真实教师会写的教案/导学案，而不是资料总结。\n"
             "2. 是否有明确教学设计、任务设计、课堂推进感。\n"
             "3. 结构是否完整清楚。\n"
-            "4. 如果是综合模板，是否真正体现图文并茂；如果已有配图却没有结合配图讲解，要严厉扣分。\n"
+            "4. 如果是教学设计或综合模版(增强版)，是否真正体现图文并茂；如果已有配图却没有结合配图讲解，要严厉扣分。\n"
             "5. must_fix 只列最关键、最值得修改的问题，最多 5 条。\n"
         )
         user_prompt = (
@@ -432,7 +433,11 @@ class LessonAgent:
         return self.build_fallback_prompt(self.request)
 
     def _build_autonomous_planning_messages(self, state: LessonAgentState) -> List[Message]:
-        template_label = "综合模板" if self.request.template_category == "comprehensive" else "导学案模板"
+        template_label = (
+            "综合模版(增强版)"
+            if self.request.template_category == "comprehensive"
+            else ("教学设计" if self.request.template_category == "teaching_design" else "导学案模板")
+        )
         system_prompt = (
             f"你是一名经验丰富的一线教师与教研组长。当前知识库未能提供与主题“{self.request.topic}”直接相关的有效上下文，"
             "请不要输出拒绝、说明资料不足、要求用户补充资料等内容。\n"
@@ -448,9 +453,14 @@ class LessonAgent:
                 "5. 产出风格必须像学校导学案，突出学习目标、重难点、基础部分、要点部分、拓展部分、目标检测，"
                 "以学生任务和题目驱动为主。\n"
             )
+        elif self.request.template_category == "teaching_design":
+            system_prompt += (
+                "5. 产出风格必须像学校教学设计，突出教学目标、教学重难点、教学准备、分环节教学过程、板书设计，必要时可补充教学反思。\n"
+                "6. 若当前没有可用配图，不要提到配图编号，也不要因为缺图而拒绝生成。\n"
+            )
         else:
             system_prompt += (
-                "5. 产出风格必须像综合教学模板，突出教学目标、重难点、导入背景、核心知识梳理、课堂活动、学生任务、互动设计、分层巩固与课堂小结。\n"
+                "5. 产出风格必须像综合模版(增强版)，既有教学目标、教学过程、板书设计，也有学生任务、互动设计、分层巩固与检测。\n"
                 "6. 若当前没有可用配图，不要提到配图编号，也不要因为缺图而拒绝生成。\n"
             )
 
@@ -547,7 +557,7 @@ class LessonAgent:
     def _extract_topic_terms(topic: str) -> List[str]:
         raw_terms = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]{2,}", str(topic or ""))
         stop_terms = {
-            "教案", "模板", "综合模板", "导学案", "综合教学模板", "教学", "内容", "主题",
+            "教案", "模板", "综合模板", "导学案", "综合教学模板", "教学设计", "教学", "内容", "主题",
             "lesson", "guide", "template", "teaching",
         }
         collected: List[str] = []

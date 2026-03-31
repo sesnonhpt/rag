@@ -731,12 +731,12 @@
       <div class="hero-grid">
         <div class="hero-panel">
           <h1 class="header-title">智能教案</h1>
-          <p class="header-subtitle">支持导学案与综合模板两种模式，面向真实课堂准备，减少堆砌感，让产出更清楚、更稳、更像成稿。</p>
+          <p class="header-subtitle">支持综合模版(增强版)、教学设计、导学案三种模式，面向真实课堂准备，减少堆砌感，让产出更清楚、更稳、更像成稿。</p>
         </div>
         <div class="hero-aside">
           <div class="hero-metric">
             <div class="hero-metric-label">内容方向</div>
-            <div class="hero-metric-value">导学案更适合学生任务单，综合模板更适合讲练结合与课堂组织。</div>
+            <div class="hero-metric-value">综合模版(增强版)更适合讲练结合，教学设计更适合教师备课，导学案更适合学生任务单。</div>
           </div>
           <div class="hero-metric">
             <div class="hero-metric-label">资料依据</div>
@@ -760,14 +760,15 @@
           <div class="form-group">
             <label for="template-category">模板类别</label>
             <select id="template-category">
+              <option value="comprehensive">综合模版(增强版)</option>
+              <option value="teaching_design">教学设计</option>
               <option value="guide">导学案模板</option>
-              <option value="comprehensive">综合模板</option>
             </select>
           </div>
 
         <div class="form-group">
           <small style="color: var(--text-light); display: block; line-height: 1.75;" id="template-description">
-            💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿
+            💡 综合模版(增强版)：融合教学设计、学生任务、互动设计、分层训练与配图讲解，生成增强版成稿
           </small>
           <small style="color: var(--text-light); display: block; line-height: 1.7; margin-top: 6px;" id="planning-indicator"></small>
         </div>
@@ -876,8 +877,9 @@
     }
 
     const templateDescriptions = {
+      comprehensive: '💡 综合模版(增强版)：融合教学设计、学生任务、互动设计、分层训练与配图讲解，生成增强版成稿',
+      teaching_design: '💡 教学设计：贴近真实教师备课稿，突出教学目标、重难点、教学过程与板书设计',
       guide: '💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿',
-      comprehensive: '💡 综合模板：融合导学案、讲练结合、互动设计和分层任务，生成固定结构成稿',
     };
 
     function updateTemplateDescription() {

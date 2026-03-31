@@ -44,7 +44,7 @@ class PlannerAgent:
     def _heuristic_plan(self, *, topic: str, template_category: str, conversation_state: Optional[Any]) -> ExecutionPlan:
         topic_text = str(topic or "")
         subject_guess = self._guess_subject(topic_text)
-        need_images = template_category == "comprehensive"
+        need_images = template_category in {"comprehensive", "teaching_design"}
         generation_mode = "context_first"
 
         preferences: Dict[str, Any] = {}
@@ -53,7 +53,7 @@ class PlannerAgent:
             preferences = dict(getattr(conversation_state, "user_preferences", {}) or {})
             feedback = list(getattr(conversation_state, "latest_feedback", []) or [])
 
-        if preferences.get("prefer_visual_lesson") and template_category == "comprehensive":
+        if preferences.get("prefer_visual_lesson") and template_category in {"comprehensive", "teaching_design"}:
             need_images = True
 
         if any("上下文" in str(item) and "不相关" in str(item) for item in feedback):
