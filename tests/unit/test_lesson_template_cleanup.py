@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from app.chat_api import LessonPlanRequest, _resolve_template_type
+from app.core.runtime_helpers import resolve_template_type_from_category
+from app.schemas.api_models import LessonPlanRequest
 from src.core.templates import TemplateConfig, TemplateManager, TemplateType
 
 
@@ -14,10 +15,10 @@ def test_lesson_plan_request_exposes_only_current_template_inputs() -> None:
 
 
 def test_resolve_template_type_maps_three_active_categories() -> None:
-    assert _resolve_template_type(LessonPlanRequest(topic="示例", template_category="guide")) == "guide_master"
-    assert _resolve_template_type(LessonPlanRequest(topic="示例", template_category="teaching_design")) == "teaching_design_master"
-    assert _resolve_template_type(LessonPlanRequest(topic="示例", template_category="comprehensive")) == "comprehensive_master"
-    assert _resolve_template_type(LessonPlanRequest(topic="示例")) is None
+    assert resolve_template_type_from_category(LessonPlanRequest(topic="示例", template_category="guide").template_category) == "guide_master"
+    assert resolve_template_type_from_category(LessonPlanRequest(topic="示例", template_category="teaching_design").template_category) == "teaching_design_master"
+    assert resolve_template_type_from_category(LessonPlanRequest(topic="示例", template_category="comprehensive").template_category) == "comprehensive_master"
+    assert resolve_template_type_from_category(LessonPlanRequest(topic="示例").template_category) is None
 
 
 def test_template_manager_builds_prompts_for_all_active_templates() -> None:

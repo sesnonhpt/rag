@@ -1,6 +1,6 @@
 """
-API Entry Point - Re-export FastAPI app from chat_api
+API Entry Point - Re-export FastAPI app from main
 """
-from app.chat_api import app
+from app.main import app
 
 __all__ = ["app"]

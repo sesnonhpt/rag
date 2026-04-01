@@ -871,15 +871,80 @@
       historyRecords = [];
     }
 
-    const templateDescriptions = {
-      comprehensive: '💡 综合模版(增强版)：融合教学设计、学生任务、互动设计、分层训练与配图讲解，生成增强版成稿',
-      teaching_design: '💡 教学设计：贴近真实教师备课稿，突出教学目标、重难点、教学过程与板书设计',
-      guide: '💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿',
-    };
+    const defaultTemplateCatalog = [
+      {
+        category: 'comprehensive',
+        template_type: 'comprehensive_master',
+        label: '综合模版(增强版)',
+        description: '💡 综合模版(增强版)：融合教学设计、学生任务、互动设计、分层训练与配图讲解，生成增强版成稿',
+        default: true,
+      },
+      {
+        category: 'teaching_design',
+        template_type: 'teaching_design_master',
+        label: '教学设计',
+        description: '💡 教学设计：贴近真实教师备课稿，突出教学目标、重难点、教学过程与板书设计',
+        default: false,
+      },
+      {
+        category: 'guide',
+        template_type: 'guide_master',
+        label: '导学案模板',
+        description: '💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿',
+        default: false,
+      },
+    ];
+    let templateCatalog = [...defaultTemplateCatalog];
+    let templateDescriptionMap = Object.fromEntries(
+      templateCatalog.map(item => [item.category, item.description])
+    );
+
+    function getDefaultTemplateCategory() {
+      const fromCatalog = templateCatalog.find(item => item.default)?.category;
+      return fromCatalog || 'comprehensive';
+    }
+
+    function applyTemplateCatalog(catalog) {
+      const safeCatalog = Array.isArray(catalog) && catalog.length ? catalog : defaultTemplateCatalog;
+      templateCatalog = safeCatalog.map(item => ({
+        category: String(item.category || '').trim(),
+        label: String(item.label || '').trim(),
+        description: String(item.description || '').trim(),
+        default: !!item.default,
+      })).filter(item => item.category && item.label);
+
+      if (!templateCatalog.length) {
+        templateCatalog = [...defaultTemplateCatalog];
+      }
+
+      templateDescriptionMap = Object.fromEntries(
+        templateCatalog.map(item => [item.category, item.description])
+      );
+
+      const previousValue = templateCategorySelect.value;
+      templateCategorySelect.innerHTML = templateCatalog
+        .map(item => `<option value="${item.category}">${item.label}</option>`)
+        .join('');
+
+      const validPrevious = templateCatalog.some(item => item.category === previousValue);
+      templateCategorySelect.value = validPrevious ? previousValue : getDefaultTemplateCategory();
+      updateTemplateDescription();
+    }
+
+    async function loadTemplateCatalog() {
+      try {
+        const response = await fetch('/lesson-template-categories');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        applyTemplateCatalog(data.templates);
+      } catch {
+        applyTemplateCatalog(defaultTemplateCatalog);
+      }
+    }
 
     function updateTemplateDescription() {
       const category = templateCategorySelect.value;
-      templateDescription.textContent = templateDescriptions[category] || '';
+      templateDescription.textContent = templateDescriptionMap[category] || '';
     }
 
     templateCategorySelect.addEventListener('change', updateTemplateDescription);
@@ -1086,7 +1151,7 @@
       const record = historyRecords[index];
       if (!record) return;
       topicInput.value = record.topic || '';
-      templateCategorySelect.value = record.templateCategory || 'guide';
+      templateCategorySelect.value = record.templateCategory || getDefaultTemplateCategory();
       conversationState = record.conversationState || null;
       updateTemplateDescription();
       topicInput.focus();
@@ -1102,7 +1167,7 @@
       }
 
       topicInput.value = record.topic || '';
-      templateCategorySelect.value = record.templateCategory || 'guide';
+      templateCategorySelect.value = record.templateCategory || getDefaultTemplateCategory();
       conversationState = record.conversationState || null;
       updateTemplateDescription();
 
@@ -1343,7 +1408,7 @@
       }
     });
 
-    updateTemplateDescription();
+    loadTemplateCatalog();
     renderHistory();
     loadBackendHistory();
   </script>

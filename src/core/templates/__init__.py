@@ -5,6 +5,14 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
 from src.libs.llm.base_llm import Message
+from .registry import (
+    TEMPLATE_CATEGORY_DEFINITIONS,
+    get_default_template_category,
+    get_template_categories_payload,
+    get_template_category_definition,
+    get_template_label_by_category,
+    resolve_template_type_by_category,
+)
 
 
 class TemplateType(Enum):
@@ -73,10 +81,16 @@ class TemplateManager:
             config=config,
             **kwargs
         )
-    
-def get_template_manager() -> TemplateManager:
-    """Get singleton instance of TemplateManager."""
-    global _template_manager
-    if '_template_manager' not in globals():
-        _template_manager = TemplateManager()
-    return _template_manager
+
+
+__all__ = [
+    "TemplateType",
+    "TemplateConfig",
+    "TemplateManager",
+    "TEMPLATE_CATEGORY_DEFINITIONS",
+    "get_template_category_definition",
+    "resolve_template_type_by_category",
+    "get_template_label_by_category",
+    "get_default_template_category",
+    "get_template_categories_payload",
+]
