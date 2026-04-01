@@ -114,10 +114,9 @@ secrets.yaml
 nonexistent_traces.jsonl/
 
 
-.agent
-.claude
-.kiro
-.venv
-.github
-.vscode
+.agents/
+.claude/
+.kiro/
+.github/
+.vscode/
 
