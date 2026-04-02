@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start the RAG Chat UI server.")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+    parser.add_argument("--workers", type=int, default=1, help="Uvicorn worker count (default: 1)")
     parser.add_argument(
         "--config",
         default=str(_ROOT / "config" / "settings.yaml"),
@@ -43,6 +44,7 @@ def main() -> None:
     print(f"[*] Starting RAG Chat UI")
     print(f"[*] Config: {config_path}")
     print(f"[*] Access at: http://{display_host}:{args.port}")
+    print(f"[*] Workers: {args.workers}")
 
     import uvicorn
     uvicorn.run(
@@ -50,6 +52,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         reload=False,
+        workers=max(1, args.workers),
     )
 
 

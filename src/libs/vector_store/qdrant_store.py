@@ -109,6 +109,7 @@ class QdrantStore(BaseVectorStore):
 
         # Ensure collection exists (create if missing)
         self._ensure_collection()
+        self._ensure_payload_indexes()
 
         logger.info(
             f"QdrantStore initialized. "
@@ -140,6 +141,22 @@ class QdrantStore(BaseVectorStore):
             logger.info(f"Collection '{self.collection_name}' created.")
         else:
             logger.debug(f"Collection '{self.collection_name}' already exists.")
+
+    def _ensure_payload_indexes(self) -> None:
+        """Ensure payload indexes exist for frequently filtered fields."""
+        try:
+            self._client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="chunk_id",
+                field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
+                wait=True,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to ensure payload index for 'chunk_id' on collection '%s': %s",
+                self.collection_name,
+                exc,
+            )
 
     def _sanitize_payload(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Remove None values and coerce types that Qdrant cannot store."""
@@ -211,6 +228,40 @@ class QdrantStore(BaseVectorStore):
             else:
                 deserialized[k] = v
         return deserialized
+
+    def _record_from_point(self, point: Any) -> Dict[str, Any]:
+        """Convert a Qdrant point object into the standard record shape."""
+        payload = dict(point.payload or {})
+        metadata = {
+            k: v for k, v in payload.items()
+            if k != "text"
+        }
+        metadata = self._deserialize_payload(metadata)
+        return {
+            "id": str(point.id),
+            "text": payload.get("text", ""),
+            "metadata": metadata,
+        }
+
+    def _scroll_by_chunk_id(self, chunk_id: str) -> Dict[str, Any]:
+        """Fallback lookup when business chunk IDs are stored in payload."""
+        points, _ = self._client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="chunk_id",
+                        match=qdrant_models.MatchValue(value=chunk_id),
+                    )
+                ]
+            ),
+            limit=1,
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not points:
+            return {}
+        return self._record_from_point(points[0])
 
     # ------------------------------------------------------------------
     # BaseVectorStore interface
@@ -356,26 +407,31 @@ class QdrantStore(BaseVectorStore):
     ) -> List[Dict[str, Any]]:
         if not ids:
             raise ValueError("IDs list cannot be empty")
-        results = self._client.retrieve(
-            collection_name=self.collection_name,
-            ids=ids,
-            with_payload=True,
-        )
-        id_to_result = {r.id: r for r in results}
+        try:
+            results = self._client.retrieve(
+                collection_name=self.collection_name,
+                ids=ids,
+                with_payload=True,
+            )
+        except UnexpectedResponse as exc:
+            logger.warning(
+                "Qdrant direct id lookup failed for collection '%s'; "
+                "falling back to payload chunk_id lookup. Error: %s",
+                self.collection_name,
+                exc,
+            )
+            return [self._scroll_by_chunk_id(rid) for rid in ids]
+
+        id_to_result = {str(r.id): r for r in results}
         output: List[Dict[str, Any]] = []
         for rid in ids:
-            rec = id_to_result.get(rid)
+            rec = id_to_result.get(str(rid))
             if rec:
-                output.append({
-                    "id": str(rec.id),
-                    "text": rec.payload.get("text", ""),
-                    "metadata": {
-                        k: v for k, v in rec.payload.items()
-                        if k != "text"
-                    },
-                })
+                output.append(self._record_from_point(rec))
             else:
-                output.append({})
+                # Some historical datasets stored the business chunk id in payload
+                # while the actual Qdrant point id was rewritten to UUID.
+                output.append(self._scroll_by_chunk_id(str(rid)))
         return output
 
     def get_collection_stats(self) -> Dict[str, Any]:

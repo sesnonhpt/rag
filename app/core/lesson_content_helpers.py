@@ -586,6 +586,30 @@ def _format_image_markdown_block(image: LessonImageResource, index: int) -> str:
     return title
 
 
+def _find_generic_image_anchor_indexes(lines: List[str]) -> List[int]:
+    cue_pattern = re.compile(
+        r"(如图|见图|下图|上图|图示|示意图|插图|配图|图\s*\d+|图[一二三四五六七八九十])",
+        flags=re.IGNORECASE,
+    )
+    image_line_pattern = re.compile(r"!\[配图\d+\]")
+    anchors: List[int] = []
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if image_line_pattern.search(stripped):
+            continue
+        if cue_pattern.search(stripped):
+            anchors.append(index + 1)
+
+    deduped: List[int] = []
+    for anchor in anchors:
+        if anchor not in deduped:
+            deduped.append(anchor)
+    return deduped
+
+
 def remove_dangling_image_references(content: str) -> str:
     if not content:
         return content
@@ -631,6 +655,23 @@ def integrate_images_into_markdown(
                 break
 
     remaining = [(idx, image) for idx, image in enumerate(image_resources, start=1) if idx not in inserted_indices]
+    if remaining:
+        cue_anchors = _find_generic_image_anchor_indexes(lines)
+        inserted_offset = 0
+        cue_index = 0
+        next_remaining: List[tuple[int, LessonImageResource]] = []
+        for global_index, image in remaining:
+            if cue_index >= len(cue_anchors):
+                next_remaining.append((global_index, image))
+                continue
+            anchor = cue_anchors[cue_index]
+            cue_index += 1
+            insert_at = max(0, min(anchor + inserted_offset, len(lines)))
+            block = [""] + _format_image_markdown_block(image, global_index).splitlines() + [""]
+            lines[insert_at:insert_at] = block
+            inserted_offset += len(block)
+        remaining = next_remaining
+
     if remaining:
         section_anchor_indexes = [
             i + 1

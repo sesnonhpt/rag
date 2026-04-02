@@ -56,14 +56,15 @@ def _make_request(*, hybrid_search, reranker, llm, fusion_top_k: int = 7):
     return SimpleNamespace(app=SimpleNamespace(state=state))
 
 
-def test_generate_chat_response_success_path():
+@pytest.mark.asyncio
+async def test_generate_chat_response_success_path():
     req = ChatRequest(question="牛顿第一定律是什么？", use_rerank=True)
     hybrid = _DummyHybridSearch([_DummyResult(text="牛顿第一定律内容")])
     reranker = _DummyReranker(enabled=True)
     llm = _DummyLLM(content="这是答案")
     request = _make_request(hybrid_search=hybrid, reranker=reranker, llm=llm, fusion_top_k=5)
 
-    response = generate_chat_response(req, request)
+    response = await generate_chat_response(req, request)
 
     assert response.answer == "这是答案"
     assert len(response.citations) == 1
@@ -72,7 +73,8 @@ def test_generate_chat_response_success_path():
     assert len(llm.calls) == 1
 
 
-def test_generate_chat_response_retrieval_error():
+@pytest.mark.asyncio
+async def test_generate_chat_response_retrieval_error():
     class _BadHybridSearch:
         def search(self, **kwargs):
             raise RuntimeError("boom")
@@ -85,20 +87,21 @@ def test_generate_chat_response_retrieval_error():
     )
 
     with pytest.raises(HTTPException) as exc:
-        generate_chat_response(req, request)
+        await generate_chat_response(req, request)
 
     assert exc.value.status_code == 500
     assert exc.value.detail["code"] == "RETRIEVAL_ERROR"
 
 
-def test_generate_chat_response_no_results_uses_fallback_prompt():
+@pytest.mark.asyncio
+async def test_generate_chat_response_no_results_uses_fallback_prompt():
     req = ChatRequest(question="不存在的问题")
     hybrid = _DummyHybridSearch([])
     reranker = _DummyReranker(enabled=True)
     llm = _DummyLLM(content="基于自身知识回答")
     request = _make_request(hybrid_search=hybrid, reranker=reranker, llm=llm)
 
-    response = generate_chat_response(req, request)
+    response = await generate_chat_response(req, request)
 
     assert response.answer == "基于自身知识回答"
     assert response.citations == []

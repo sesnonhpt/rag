@@ -185,6 +185,34 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - 若要提升图片命中率，优先检查 `data/images`、`image_index.db` 与线上部署一致性
 - 若要做 RAG 优化，建议先从 `hit_rate / mrr / faithfulness / answer_relevancy` 开始
 
+## 压测建议
+
+仓库内置了一个轻量压测脚本，可直接并发请求 `POST /chat`：
+
+```bash
+python scripts/load_test_chat.py \
+  --url http://127.0.0.1:8000/chat \
+  --users 5 \
+  --requests 20 \
+  --question "这个知识库主要是做什么的？"
+```
+
+输出会给出：
+
+- 成功率
+- 平均延迟
+- `P50 / P95` 延迟
+- 吞吐量（req/s）
+
+建议从下面这组阶梯开始测：
+
+- `--users 1 --requests 10`
+- `--users 3 --requests 15`
+- `--users 5 --requests 20`
+- `--users 10 --requests 30`
+
+如果 `P95` 明显飙升、失败率开始上升，那个并发档位就已经接近当前部署上限。
+
 ## License
 
 仅供学习与项目实践使用。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import HTTPException
@@ -16,7 +17,7 @@ from src.observability.logger import get_logger
 logger = get_logger(__name__)
 
 
-def generate_chat_response(req: Any, request: Any) -> Any:
+async def generate_chat_response(req: Any, request: Any) -> Any:
     state = request.app.state
     settings = state.settings
     hybrid_search = state.hybrid_search
@@ -27,7 +28,10 @@ def generate_chat_response(req: Any, request: Any) -> Any:
     trace = TraceContext(trace_type="chat")
 
     try:
-        hybrid_result = hybrid_search.search(
+        # Offload retrieval to a worker thread because the underlying
+        # retrievers may perform blocking CPU/I/O work.
+        hybrid_result = await asyncio.to_thread(
+            hybrid_search.search,
             query=req.question,
             top_k=top_k,
             filters=None,
@@ -49,7 +53,13 @@ def generate_chat_response(req: Any, request: Any) -> Any:
 
     if results and req.use_rerank and reranker.is_enabled:
         try:
-            rerank_result = reranker.rerank(query=req.question, results=results, top_k=top_k, trace=trace)
+            rerank_result = await asyncio.to_thread(
+                reranker.rerank,
+                query=req.question,
+                results=results,
+                top_k=top_k,
+                trace=trace,
+            )
             results = rerank_result.results
         except Exception as e:
             logger.warning(f"Reranking failed, using original order: {e}")
@@ -81,7 +91,9 @@ def generate_chat_response(req: Any, request: Any) -> Any:
                     content=f"问题：{req.question}",
                 ),
             ]
-        llm_response = llm.chat(messages)
+        # Provider SDK calls are synchronous, so run generation outside
+        # the event loop to keep concurrent requests moving.
+        llm_response = await asyncio.to_thread(llm.chat, messages)
         answer = llm_response.content
     except Exception as e:
         logger.exception("LLM generation failed")
