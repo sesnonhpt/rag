@@ -42,6 +42,10 @@ services:
       - QDRANT_VECTOR_DIM=2560
       # Observability
       - OBSERVABILITY_TRACE_ENABLED=false
+      # Lesson timeouts
+      - LESSON_PLAN_REQUEST_TIMEOUT_SEC=${LESSON_PLAN_REQUEST_TIMEOUT_SEC:-120}
+      - LESSON_PLAN_STREAM_TIMEOUT_SEC=${LESSON_PLAN_STREAM_TIMEOUT_SEC:-300}
+      - OPENAI_LLM_TIMEOUT_SEC=${OPENAI_LLM_TIMEOUT_SEC:-90}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

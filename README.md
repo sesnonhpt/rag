@@ -79,6 +79,10 @@ QDRANT_URL=your_qdrant_url
 QDRANT_API_KEY=your_qdrant_key
 QDRANT_COLLECTION_NAME=default
 QDRANT_VECTOR_DIM=2560
+
+LESSON_PLAN_REQUEST_TIMEOUT_SEC=120
+LESSON_PLAN_STREAM_TIMEOUT_SEC=300
+OPENAI_LLM_TIMEOUT_SEC=90
 ```
 
 如果你希望 Gemini 模型走单独网关，可以额外配置：
@@ -153,6 +157,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - 需要把 `data/images` 和 `data/db/image_index.db` 一起带上
 - Qdrant 只保存文本向量，不会自动保存本地图片文件
 - 线上图片 404 通常意味着图片文件或图片索引未随部署一起上传
+- 教案流式生成建议单独配置 `LESSON_PLAN_STREAM_TIMEOUT_SEC`，并用 `OPENAI_LLM_TIMEOUT_SEC` 限制单次模型调用时长
 
 ## 推荐模型
 
