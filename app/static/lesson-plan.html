@@ -186,6 +186,7 @@
     }
 
     .form-group input[type="text"],
+    .form-group textarea,
     .form-group select {
       width: 100%;
       padding: 15px 16px;
@@ -197,11 +198,19 @@
     }
 
     .form-group input[type="text"]:focus,
+    .form-group textarea:focus,
     .form-group select:focus {
       outline: none;
       border-color: var(--primary-color);
       box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
       transform: translateY(-1px);
+    }
+
+    .form-group textarea {
+      min-height: 96px;
+      resize: vertical;
+      line-height: 1.7;
+      font-family: inherit;
     }
 
     .button-group {
@@ -759,6 +768,11 @@
           </div>
 
           <div class="form-group">
+            <label for="notes-input">备注</label>
+            <textarea id="notes-input" placeholder="例如：希望更偏实验探究；增加生活案例；课堂互动多一点；减少公式推导。"></textarea>
+          </div>
+
+          <div class="form-group">
             <label for="template-category">模板类别</label>
             <select id="template-category">
               <option value="comprehensive">综合模版(增强版)</option>
@@ -839,6 +853,7 @@
 
   <script>
     const topicInput = document.getElementById('topic-input');
+    const notesInput = document.getElementById('notes-input');
     const modelSelect = document.getElementById('model-select');
     const generateBtn = document.getElementById('generate-btn');
     const resetBtn = document.getElementById('reset-btn');
@@ -1132,6 +1147,7 @@
     function saveHistoryRecord(data) {
       const record = {
         topic: topicInput.value.trim(),
+        notes: notesInput.value.trim(),
         templateCategory: templateCategorySelect.value,
         templateLabel: templateCategorySelect.options[templateCategorySelect.selectedIndex]?.textContent || '',
         subject: data.subject || '',
@@ -1159,6 +1175,7 @@
       const record = historyRecords[index];
       if (!record) return;
       topicInput.value = record.topic || '';
+      notesInput.value = record.notes || '';
       templateCategorySelect.value = record.templateCategory || getDefaultTemplateCategory();
       conversationState = record.conversationState || null;
       updateTemplateDescription();
@@ -1175,6 +1192,7 @@
       }
 
       topicInput.value = record.topic || '';
+      notesInput.value = record.notes || '';
       templateCategorySelect.value = record.templateCategory || getDefaultTemplateCategory();
       conversationState = record.conversationState || null;
       updateTemplateDescription();
@@ -1344,6 +1362,7 @@
 
         const requestBody = {
           topic: topic,
+          notes: notesInput.value.trim() || null,
           collection: 'default',
           model: modelSelect.value || null,
           template_category: templateCategory,
@@ -1369,6 +1388,7 @@
 
     function resetForm() {
       topicInput.value = '';
+      notesInput.value = '';
       resultSection.style.display = 'none';
       conversationState = null;
       localStorage.removeItem(CONVERSATION_STATE_KEY);

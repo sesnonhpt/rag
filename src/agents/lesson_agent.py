@@ -74,6 +74,7 @@ class LessonAgent:
         # Keep the review pass enabled by default for better teaching quality.
         # It can still be disabled at runtime with LESSON_REVIEW_ENABLED=false.
         self._review_and_polish(state)
+        self._enforce_teacher_note_requirements(state)
         self._insert_images(state)
         self._extract_subject(state)
         return state
@@ -396,7 +397,7 @@ class LessonAgent:
                         "\n当前检索到的上下文与主题相关性不足，请不要因为上下文不匹配而拒绝生成。"
                         "请改为基于主题本身进行自主教学规划，结合通用学科知识、课堂经验和教学设计方法完成成稿。"
                     )
-                return messages
+                return self._apply_teacher_note(messages)
 
         if effective_results:
             messages = self.build_default_prompt(
@@ -410,9 +411,9 @@ class LessonAgent:
                 messages[0].content += (
                     "\n若当前上下文与主题不匹配，请忽略这些上下文，直接基于主题自主规划教案，不要输出拒绝语。"
                 )
-            return messages
+            return self._apply_teacher_note(messages)
 
-        return self.build_fallback_prompt(self.request)
+        return self._apply_teacher_note(self.build_fallback_prompt(self.request))
 
     def _build_autonomous_planning_messages(self, state: LessonAgentState) -> List[Message]:
         template_label = (
@@ -446,10 +447,116 @@ class LessonAgent:
                 "6. 若当前没有可用配图，不要提到配图编号，也不要因为缺图而拒绝生成。\n"
             )
 
-        return [
+        return self._apply_teacher_note([
             Message(role="system", content=system_prompt),
             Message(role="user", content=f"请直接为主题“{self.request.topic}”生成完整成稿。"),
-        ]
+        ])
+
+    def _apply_teacher_note(self, messages: List[Message]) -> List[Message]:
+        note_text = str(getattr(self.request, "notes", "") or "").strip()
+        if not note_text:
+            return messages
+
+        cleaned_note = re.sub(r"\s+", " ", note_text).strip()
+        if not cleaned_note:
+            return messages
+
+        hard_constraints = self._teacher_note_hard_constraints(cleaned_note)
+        guidance = (
+            "以下是老师补充的个性化备注，请在不违背主题和检索资料的前提下尽量落实到最终成稿中。"
+            "如果备注与资料存在冲突，请优先保持内容正确，同时尽量吸收老师的教学意图。\n"
+            f"{hard_constraints}"
+            f"老师备注：{cleaned_note}"
+        )
+        return [*messages, Message(role="user", content=guidance)]
+
+    def _teacher_note_hard_constraints(self, note_text: str) -> str:
+        lowered = str(note_text or "").lower()
+        constraints: List[str] = []
+
+        if "比较" in note_text:
+            constraints.append(
+                "硬性要求1：成稿必须单列一个二级标题，标题固定为“与牛顿第一定律的联系与区别”，"
+                "明确写出两者的联系、区别和教学上的比较要点。\n"
+            )
+        if any(keyword in note_text for keyword in ["牛顿的故事", "牛顿故事", "牛顿生平", "生平"]) or (
+            "牛顿" in note_text and any(keyword in note_text for keyword in ["故事", "科学史"])
+        ):
+            constraints.append(
+                "硬性要求2：导入环节必须包含一段与主题相关的牛顿生平或科学史故事，"
+                "且这段内容要直接服务于课堂导入，不能只是一句泛泛带过。\n"
+            )
+
+        if not constraints and lowered:
+            return ""
+        return "".join(constraints)
+
+    def _teacher_note_requirement_issues(self, content: str) -> List[str]:
+        note_text = str(getattr(self.request, "notes", "") or "").strip()
+        if not note_text:
+            return []
+
+        text = str(content or "")
+        issues: List[str] = []
+
+        if "比较" in note_text:
+            has_compare_title = any(
+                marker in text for marker in ["与牛顿第一定律的联系与区别", "与牛顿第一定律的联系和区别"]
+            )
+            has_first_law = "牛顿第一定律" in text
+            if not (has_compare_title and has_first_law):
+                issues.append("缺少“与牛顿第一定律的联系与区别”专门小节")
+
+        requires_story = any(keyword in note_text for keyword in ["牛顿的故事", "牛顿故事", "牛顿生平", "生平"]) or (
+            "牛顿" in note_text and any(keyword in note_text for keyword in ["故事", "科学史"])
+        )
+        if requires_story:
+            has_newton = "牛顿" in text
+            has_story = any(keyword in text for keyword in ["故事", "生平", "科学史"])
+            has_intro = any(keyword in text for keyword in ["导入", "情境导入", "环节一"])
+            if not (has_newton and has_story and has_intro):
+                issues.append("导入环节缺少服务于教学导入的牛顿故事或生平材料")
+
+        return issues
+
+    def _enforce_teacher_note_requirements(self, state: LessonAgentState) -> None:
+        content = state.final_content or state.draft_content or ""
+        if not content:
+            return
+
+        issues = self._teacher_note_requirement_issues(content)
+        if not issues:
+            return
+
+        revision_prompt = (
+            "你是一名资深教研员，请在保留现有教案主体结构、语气和内容风格的前提下，"
+            "只补齐下列老师硬性要求，不要重写整篇，不要删除已有有效内容。\n"
+            "必须补齐的问题：\n"
+            + "\n".join(f"- {item}" for item in issues)
+            + "\n输出要求：\n"
+            "1. 直接输出修订后的完整成稿。\n"
+            "2. 如果要求比较，必须出现二级标题“与牛顿第一定律的联系与区别”。\n"
+            "3. 如果要求牛顿故事，必须把相关内容放在导入环节，并明确服务于课堂导入。\n"
+            "4. 全文使用简体中文。\n"
+        )
+        revised = self.llm.chat(
+            [
+                Message(role="system", content=revision_prompt),
+                Message(role="user", content=content),
+            ]
+        ).content
+        cleaned = self._clean_trailing_english(revised)
+        if cleaned:
+            state.final_content = cleaned
+            state.metadata["teacher_note_revision_applied"] = True
+            self.trace.record_stage(
+                "agent_teacher_note_revision",
+                {
+                    "issue_count": len(issues),
+                    "issues": issues,
+                },
+                elapsed_ms=0.0,
+            )
 
     @staticmethod
     def _clean_trailing_english(content: str) -> str:

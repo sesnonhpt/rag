@@ -28,6 +28,7 @@ class LessonHistoryStorage:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT,
                     topic TEXT NOT NULL,
+                    notes TEXT,
                     template_category TEXT,
                     template_label TEXT,
                     subject TEXT,
@@ -43,6 +44,7 @@ class LessonHistoryStorage:
             self._ensure_column(conn, "lesson_history", "planning_mode", "TEXT")
             self._ensure_column(conn, "lesson_history", "used_autonomous_fallback", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "lesson_history", "lesson_content", "TEXT")
+            self._ensure_column(conn, "lesson_history", "notes", "TEXT")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_lesson_history_session
@@ -72,6 +74,7 @@ class LessonHistoryStorage:
         *,
         session_id: Optional[str],
         topic: str,
+        notes: Optional[str],
         template_category: Optional[str],
         template_label: Optional[str],
         subject: Optional[str],
@@ -89,6 +92,7 @@ class LessonHistoryStorage:
                 INSERT INTO lesson_history (
                     session_id,
                     topic,
+                    notes,
                     template_category,
                     template_label,
                     subject,
@@ -99,11 +103,12 @@ class LessonHistoryStorage:
                     planning_mode,
                     used_autonomous_fallback
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
                     topic,
+                    notes or "",
                     template_category,
                     template_label,
                     subject,
@@ -157,6 +162,7 @@ class LessonHistoryStorage:
                 {
                     "id": row["id"],
                     "topic": row["topic"],
+                    "notes": row["notes"] or "",
                     "templateCategory": row["template_category"],
                     "templateLabel": row["template_label"],
                     "subject": row["subject"],

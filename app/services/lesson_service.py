@@ -238,6 +238,7 @@ def generate_lesson_plan_internal(
         request.app.state.history_storage.add_record(
             session_id=finalized_conversation.session_id,
             topic=req.topic,
+            notes=req.notes,
             template_category=req.template_category,
             template_label=get_template_label_by_category(req.template_category),
             subject=subject,

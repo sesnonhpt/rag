@@ -9,6 +9,7 @@ def test_lesson_plan_request_exposes_only_current_template_inputs() -> None:
     fields = LessonPlanRequest.model_fields
 
     assert "template_category" in fields
+    assert "notes" in fields
     assert "template_type" not in fields
     assert "grade_level" not in fields
     assert "learning_style" not in fields

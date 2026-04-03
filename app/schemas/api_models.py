@@ -16,6 +16,7 @@ class ChatRequest(BaseModel):
 
 class LessonPlanRequest(BaseModel):
     topic: str = Field(..., min_length=1, description="教案主题")
+    notes: Optional[str] = Field(default=None, description="教师备注或补充要求")
     collection: str = Field(default="default", description="知识库集合名称")
     model: Optional[str] = Field(default=None, description="LLM模型名称，不指定则使用默认配置")
     include_background: bool = Field(default=True, description="是否包含背景信息")
