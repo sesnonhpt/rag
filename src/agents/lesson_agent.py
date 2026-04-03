@@ -124,9 +124,9 @@ class LessonAgent:
 
     def _insert_images(self, state: LessonAgentState) -> None:
         content = state.final_content or state.draft_content or ""
-        usable_context = state.metadata.get("usable_context", True)
-        effective_images = state.assets.image_resources if usable_context else []
-        if self.resolved_template_type in {"comprehensive_master", "teaching_design_master"} and effective_images:
+        effective_images = state.assets.image_resources
+        image_enabled_templates = {"comprehensive_master", "teaching_design_master", "guide_master"}
+        if self.resolved_template_type in image_enabled_templates and effective_images:
             content = self.integrate_images(content, effective_images)
 
         state.final_content = content
@@ -134,7 +134,7 @@ class LessonAgent:
             "agent_integrate_images",
             {
                 "inserted_image_candidates": len(effective_images),
-                "applied": self.resolved_template_type in {"comprehensive_master", "teaching_design_master"} and bool(effective_images),
+                "applied": self.resolved_template_type in image_enabled_templates and bool(effective_images),
             },
         )
 

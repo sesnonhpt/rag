@@ -19,7 +19,14 @@ async def serve_ui():
     html_file = STATIC_DIR / "lesson-plan.html"
     if not html_file.exists():
         raise HTTPException(status_code=404, detail="UI file not found")
-    return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        content=html_file.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @router.get("/lesson-plan.html", response_class=HTMLResponse)
@@ -27,7 +34,14 @@ async def serve_lesson_plan_ui():
     html_file = STATIC_DIR / "lesson-plan.html"
     if not html_file.exists():
         raise HTTPException(status_code=404, detail="Lesson Plan UI file not found")
-    return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        content=html_file.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @router.get("/lesson-plan-image/{image_id}")
