@@ -848,6 +848,7 @@
     const exportDocBtn = document.getElementById('export-doc-btn');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingText = document.querySelector('.loading-text');
+    const exportDocBtnDefaultText = exportDocBtn ? exportDocBtn.textContent : '导出 DOCX';
     const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
     const HISTORY_STORAGE_KEY = 'lesson_plan_history_records';
     const historyList = document.getElementById('history-list');
@@ -959,6 +960,12 @@
       }
     }
 
+    function setExportLoading(show) {
+      generateBtn.disabled = show;
+      exportDocBtn.disabled = show || !lessonContent.textContent.trim();
+      exportDocBtn.textContent = show ? '导出中...' : exportDocBtnDefaultText;
+    }
+
     function sanitizeFilename(value) {
       return String(value || '教案')
         .replace(/[\\/:*?"<>|]/g, '_')
@@ -975,7 +982,7 @@
       }
 
       const exportTitle = sanitizeFilename(topicInput.value || '教案');
-      exportDocBtn.disabled = true;
+      setExportLoading(true);
 
       try {
         const response = await fetch('/lesson-plan/export-docx', {
@@ -1010,7 +1017,7 @@
       } catch (error) {
         showError(`DOCX 导出失败：${error.message}`);
       } finally {
-        exportDocBtn.disabled = !lessonContent.textContent.trim();
+        setExportLoading(false);
       }
     }
 
