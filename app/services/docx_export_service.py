@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from bs4 import BeautifulSoup
@@ -24,7 +25,7 @@ def _get_docx_imports() -> Dict[str, Any]:
         from docx import Document as DocxDocument
         from docx.enum.text import WD_ALIGN_PARAGRAPH as DocxAlign
         from docx.oxml.ns import qn as docx_qn
-        from docx.shared import Inches as DocxInches, Pt as DocxPt
+        from docx.shared import Inches as DocxInches, Pt as DocxPt, RGBColor as DocxRGBColor
     except ImportError as e:
         raise RuntimeError(
             "DOCX 导出依赖缺失，请安装 python-docx 后重试"
@@ -36,6 +37,7 @@ def _get_docx_imports() -> Dict[str, Any]:
         "qn": docx_qn,
         "Inches": DocxInches,
         "Pt": DocxPt,
+        "RGBColor": DocxRGBColor,
     }
     return _DOCX_IMPORTS
 
@@ -46,6 +48,7 @@ def _set_docx_style_font(style: Any, east_asia_font: str, western_font: str, siz
     font.name = western_font
     font.size = imports["Pt"](size_pt)
     font.bold = bold
+    font.color.rgb = imports["RGBColor"](0, 0, 0)
     style.element.rPr.rFonts.set(imports["qn"]("w:eastAsia"), east_asia_font)
     style.element.rPr.rFonts.set(imports["qn"]("w:ascii"), western_font)
     style.element.rPr.rFonts.set(imports["qn"]("w:hAnsi"), western_font)
@@ -53,16 +56,84 @@ def _set_docx_style_font(style: Any, east_asia_font: str, western_font: str, siz
 
 def _configure_docx_styles(document: Any) -> None:
     body_cjk_font = "SimSun"
+    latin_font = "Times New Roman"
+
+    _set_docx_style_font(document.styles["Normal"], body_cjk_font, latin_font, 12)
+    _set_docx_style_font(document.styles["List Bullet"], body_cjk_font, latin_font, 12)
+    _set_docx_style_font(document.styles["List Number"], body_cjk_font, latin_font, 12)
+
+
+def _apply_run_font(run: Any, east_asia_font: str, western_font: str, size_pt: int, *, bold: bool = False) -> None:
+    imports = _get_docx_imports()
+    font = run.font
+    font.name = east_asia_font
+    font.size = imports["Pt"](size_pt)
+    font.bold = bold
+    font.color.rgb = imports["RGBColor"](0, 0, 0)
+
+    run_element = getattr(run, "_element", None)
+    if run_element is None:
+        return
+    if hasattr(run_element, "get_or_add_rPr"):
+        run_properties = run_element.get_or_add_rPr()
+    else:
+        run_properties = getattr(run_element, "rPr", None)
+    if run_properties is not None and getattr(run_properties, "rFonts", None) is not None:
+        run_properties.rFonts.set(imports["qn"]("w:eastAsia"), east_asia_font)
+        run_properties.rFonts.set(imports["qn"]("w:ascii"), western_font)
+        run_properties.rFonts.set(imports["qn"]("w:hAnsi"), western_font)
+        run_properties.rFonts.set(imports["qn"]("w:cs"), western_font)
+
+
+def _looks_like_heading_1_text(text: str) -> bool:
+    clean = " ".join(str(text or "").split())
+    if len(clean) > 30:
+        return False
+    return bool(re.match(r"^[一二三四五六七八九十]+[、\.．]\s*[^。；：:]{1,20}$", clean))
+
+
+def _apply_paragraph_paper_style(paragraph: Any, role: str) -> None:
+    imports = _get_docx_imports()
+    format_ = paragraph.paragraph_format
+    format_.line_spacing = 1.5
+
+    body_cjk_font = "SimSun"
     heading_cjk_font = "SimHei"
     latin_font = "Times New Roman"
 
-    _set_docx_style_font(document.styles["Normal"], body_cjk_font, latin_font, 11)
-    _set_docx_style_font(document.styles["Title"], heading_cjk_font, latin_font, 18, bold=True)
-    _set_docx_style_font(document.styles["Heading 1"], heading_cjk_font, latin_font, 15, bold=True)
-    _set_docx_style_font(document.styles["Heading 2"], heading_cjk_font, latin_font, 13, bold=True)
-    _set_docx_style_font(document.styles["Heading 3"], heading_cjk_font, latin_font, 12, bold=True)
-    _set_docx_style_font(document.styles["List Bullet"], body_cjk_font, latin_font, 11)
-    _set_docx_style_font(document.styles["List Number"], body_cjk_font, latin_font, 11)
+    if role == "title":
+        format_.space_before = imports["Pt"](0)
+        format_.space_after = imports["Pt"](18)
+        paragraph.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
+        for run in getattr(paragraph, "runs", []):
+            _apply_run_font(run, heading_cjk_font, latin_font, 16, bold=True)
+        return
+
+    if role == "heading_1":
+        format_.space_before = imports["Pt"](12)
+        format_.space_after = imports["Pt"](6)
+        for run in getattr(paragraph, "runs", []):
+            _apply_run_font(run, heading_cjk_font, latin_font, 14, bold=True)
+        return
+
+    if role == "heading_2":
+        format_.space_before = imports["Pt"](10)
+        format_.space_after = imports["Pt"](4)
+        for run in getattr(paragraph, "runs", []):
+            _apply_run_font(run, body_cjk_font, latin_font, 12, bold=True)
+        return
+
+    if role == "heading_3":
+        format_.space_before = imports["Pt"](8)
+        format_.space_after = imports["Pt"](2)
+        for run in getattr(paragraph, "runs", []):
+            _apply_run_font(run, body_cjk_font, latin_font, 12, bold=True)
+        return
+
+    format_.space_before = imports["Pt"](0)
+    format_.space_after = imports["Pt"](6)
+    for run in getattr(paragraph, "runs", []):
+        _apply_run_font(run, body_cjk_font, latin_font, 12, bold=False)
 
 
 def _normalize_image_to_png_stream(image: Any) -> Optional[BytesIO]:
@@ -137,12 +208,21 @@ def _decode_embedded_image(src: str, resolve_image_bytes: Callable[[str], Option
         return None
 
 
-def _append_text_paragraph(document: Any, text: str, *, style: Optional[str] = None) -> None:
+def _append_text_paragraph(
+    document: Any,
+    text: str,
+    *,
+    style: Optional[str] = None,
+    role: str = "body",
+) -> None:
     clean = " ".join(str(text or "").split())
     if not clean:
         return
+    if role == "body" and _looks_like_heading_1_text(clean):
+        role = "heading_1"
     paragraph = document.add_paragraph(style=style)
     paragraph.add_run(clean)
+    _apply_paragraph_paper_style(paragraph, role)
 
 
 def _append_image_to_docx(
@@ -236,13 +316,14 @@ def _append_node_content(
     resolve_image_bytes: Optional[Callable[[str], Optional[bytes]]] = None,
     *,
     style: Optional[str] = None,
+    role: str = "body",
 ) -> None:
     text_buffer: List[str] = []
 
     for child in getattr(node, "children", []):
         child_name = getattr(child, "name", None)
         if child_name == "img":
-            _append_text_paragraph(document, " ".join(text_buffer), style=style)
+            _append_text_paragraph(document, " ".join(text_buffer), style=style, role=role)
             text_buffer = []
             _append_image_to_docx(
                 document,
@@ -261,7 +342,7 @@ def _append_node_content(
         if child_text:
             text_buffer.append(child_text)
 
-    _append_text_paragraph(document, " ".join(text_buffer), style=style)
+    _append_text_paragraph(document, " ".join(text_buffer), style=style, role=role)
 
 
 def _render_html_to_docx(
@@ -281,16 +362,16 @@ def _render_html_to_docx(
         name = getattr(node, "name", "") or ""
 
         if name == "h1":
-            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, style="Title")
+            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, role="title")
             continue
         if name == "h2":
-            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, style="Heading 1")
+            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, role="heading_1")
             continue
         if name == "h3":
-            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, style="Heading 2")
+            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, role="heading_2")
             continue
         if name == "h4":
-            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, style="Heading 3")
+            _append_node_content(document, node, resolve_image_path, resolve_image_bytes, role="heading_3")
             continue
         if name in {"p", "blockquote", "div"}:
             _append_node_content(document, node, resolve_image_path, resolve_image_bytes)

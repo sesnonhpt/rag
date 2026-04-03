@@ -25,6 +25,7 @@ class _FakeFont:
         self.name = None
         self.size = None
         self.bold = None
+        self.color = SimpleNamespace(rgb=None)
 
 
 class _FakeStyle:
@@ -36,6 +37,12 @@ class _FakeStyle:
 class _FakeRun:
     def __init__(self, calls):
         self.calls = calls
+        self.font = SimpleNamespace(color=SimpleNamespace(rgb=None))
+        self.font.name = None
+        self.font.size = None
+        self.font.bold = None
+        rpr = SimpleNamespace(rFonts=_FakeRFonts())
+        self._element = SimpleNamespace(rPr=rpr, get_or_add_rPr=lambda: rpr)
 
     def add_picture(self, source, width):
         self.calls.append({"source": source, "width": width})
@@ -46,10 +53,18 @@ class _FakeParagraph:
         self.alignment = None
         self.calls = calls
         self.text_runs = []
+        self.runs = []
+        self.paragraph_format = SimpleNamespace(
+            line_spacing=None,
+            space_before=None,
+            space_after=None,
+        )
 
     def add_run(self, text: str = ""):
         self.text_runs.append(text)
-        return _FakeRun(self.calls)
+        run = _FakeRun(self.calls)
+        self.runs.append(run)
+        return run
 
 
 class _FakeSection:
@@ -102,6 +117,7 @@ def test_build_lesson_docx_bytes_embeds_image_with_expected_width(monkeypatch, t
             "qn": lambda key: key,
             "Inches": lambda value: value,
             "Pt": lambda value: value,
+            "RGBColor": lambda r, g, b: (r, g, b),
         },
     )
 
@@ -147,6 +163,7 @@ def test_append_image_to_docx_uses_converted_stream_on_direct_failure(monkeypatc
         lambda: {
             "WD_ALIGN_PARAGRAPH": SimpleNamespace(CENTER="CENTER"),
             "Inches": lambda value: value,
+            "RGBColor": lambda r, g, b: (r, g, b),
         },
     )
     monkeypatch.setattr(svc, "_build_docx_compatible_image_stream", lambda _: BytesIO(b"converted"))
@@ -180,6 +197,7 @@ def test_build_lesson_docx_bytes_prefers_embedded_image_bytes(monkeypatch):
             "qn": lambda key: key,
             "Inches": lambda value: value,
             "Pt": lambda value: value,
+            "RGBColor": lambda r, g, b: (r, g, b),
         },
     )
     monkeypatch.setattr(svc, "_decode_embedded_image", lambda src, resolver: BytesIO(b"embedded-image"))
@@ -193,3 +211,93 @@ def test_build_lesson_docx_bytes_prefers_embedded_image_bytes(monkeypatch):
     assert output == b"DOCX"
     assert holder["doc"].picture_calls
     assert isinstance(holder["doc"].picture_calls[0]["source"], BytesIO)
+
+
+def test_configure_docx_styles_forces_black_headings(monkeypatch):
+    doc = _FakeDocument()
+
+    monkeypatch.setattr(
+        svc,
+        "_get_docx_imports",
+        lambda: {
+            "qn": lambda key: key,
+            "Pt": lambda value: value,
+            "RGBColor": lambda r, g, b: (r, g, b),
+        },
+    )
+
+    svc._configure_docx_styles(doc)
+
+    assert doc.styles["Normal"].font.bold is False
+    assert doc.styles["Normal"].font.color.rgb == (0, 0, 0)
+    assert doc.styles["List Bullet"].font.color.rgb == (0, 0, 0)
+    assert doc.styles["List Number"].font.color.rgb == (0, 0, 0)
+
+
+def test_append_text_paragraph_applies_paper_title_style(monkeypatch):
+    doc = _FakeDocument()
+
+    monkeypatch.setattr(
+        svc,
+        "_get_docx_imports",
+        lambda: {
+            "WD_ALIGN_PARAGRAPH": SimpleNamespace(CENTER="CENTER"),
+            "qn": lambda key: key,
+            "Pt": lambda value: value,
+            "RGBColor": lambda r, g, b: (r, g, b),
+        },
+    )
+
+    svc._append_text_paragraph(doc, "标题", role="title")
+
+    paragraph = doc.paragraphs[0]
+    run = paragraph.runs[0]
+    assert paragraph.alignment == "CENTER"
+    assert run.font.bold is True
+    assert run.font.size == 16
+
+
+def test_append_text_paragraph_applies_blackface_for_heading_1(monkeypatch):
+    doc = _FakeDocument()
+
+    monkeypatch.setattr(
+        svc,
+        "_get_docx_imports",
+        lambda: {
+            "WD_ALIGN_PARAGRAPH": SimpleNamespace(CENTER="CENTER"),
+            "qn": lambda key: key,
+            "Pt": lambda value: value,
+            "RGBColor": lambda r, g, b: (r, g, b),
+        },
+    )
+
+    svc._append_text_paragraph(doc, "一级标题", role="heading_1")
+
+    paragraph = doc.paragraphs[0]
+    run = paragraph.runs[0]
+    assert run.font.bold is True
+    assert run.font.size == 14
+    assert run.font.name == "SimHei"
+    assert run._element.rPr.rFonts.values["w:eastAsia"] == "SimHei"
+
+
+def test_append_text_paragraph_promotes_chinese_section_line_to_heading_1(monkeypatch):
+    doc = _FakeDocument()
+
+    monkeypatch.setattr(
+        svc,
+        "_get_docx_imports",
+        lambda: {
+            "WD_ALIGN_PARAGRAPH": SimpleNamespace(CENTER="CENTER"),
+            "qn": lambda key: key,
+            "Pt": lambda value: value,
+            "RGBColor": lambda r, g, b: (r, g, b),
+        },
+    )
+
+    svc._append_text_paragraph(doc, "一、教学目标")
+
+    run = doc.paragraphs[0].runs[0]
+    assert run.font.bold is True
+    assert run.font.name == "SimHei"
+    assert run.font.size == 14

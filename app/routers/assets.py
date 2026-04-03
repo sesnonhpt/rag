@@ -27,10 +27,12 @@ def _stream_web_compatible_image(path: Path):
 
     if suffix in _CONVERTIBLE_EXTENSIONS:
         try:
-            from PIL import Image, ImageOps
+            from PIL import Image, ImageFile, ImageOps
 
+            ImageFile.LOAD_TRUNCATED_IMAGES = True
             with Image.open(path) as image:
                 normalized = ImageOps.exif_transpose(image)
+                normalized.load()
                 if normalized.mode not in {"RGB", "L"}:
                     normalized = normalized.convert("RGB")
                 buffer = BytesIO()
