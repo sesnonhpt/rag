@@ -67,6 +67,9 @@ config/settings.yaml.bak
 # IDE
 .idea/
 .vscode/
+
+# Local interview notes
+local_notes/
 *.swp
 *.swo
 *~
@@ -120,4 +123,6 @@ nonexistent_traces.jsonl/
 .github/
 .vscode/
 
-
+data/images/physics_eval
+data/images/physics_fast
+data/images/physics_fast20

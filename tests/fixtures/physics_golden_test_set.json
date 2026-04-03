@@ -1,0 +1,44 @@
+{
+  "test_cases": [
+    {
+      "query": "什么是质点？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "参考系的作用是什么？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "位移和路程有什么区别？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "速度和速率有什么区别？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "加速度的物理意义是什么？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "什么叫匀变速直线运动？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "匀变速直线运动中速度与时间有什么关系？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "匀变速直线运动中位移与时间有什么关系？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "自由落体运动有什么特点？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    },
+    {
+      "query": "什么是牛顿第三定律？",
+      "expected_sources": ["普通高中教科书 物理 必修 第1册.pdf"]
+    }
+  ]
+}

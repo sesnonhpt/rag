@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import os
 import re
-from io import BytesIO
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
@@ -126,7 +125,6 @@ async def export_lesson_plan_docx(req: ExportDocxRequest, request: Request):
                 stage="lesson_docx_export",
             ),
         ) from e
-
 
 @router.post("/lesson-plan/stream")
 async def stream_lesson_plan(req: LessonPlanRequest, request: Request):

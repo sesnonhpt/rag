@@ -227,7 +227,10 @@ class RagasEvaluator(BaseEvaluator):
                 api_version=getattr(llm_cfg, "api_version", None) or "2024-02-15-preview",
             )
         elif provider == "openai":
-            llm_client = AsyncOpenAI(api_key=llm_cfg.api_key)
+            client_kwargs = {"api_key": llm_cfg.api_key}
+            if getattr(llm_cfg, "base_url", None):
+                client_kwargs["base_url"] = llm_cfg.base_url
+            llm_client = AsyncOpenAI(**client_kwargs)
         else:
             raise ValueError(
                 f"Unsupported LLM provider for Ragas: '{provider}'. "
@@ -254,7 +257,10 @@ class RagasEvaluator(BaseEvaluator):
                 api_version=getattr(emb_cfg, "api_version", None) or "2024-02-15-preview",
             )
         elif emb_provider == "openai":
-            emb_client = AsyncOpenAI(api_key=emb_cfg.api_key)
+            client_kwargs = {"api_key": emb_cfg.api_key}
+            if getattr(emb_cfg, "base_url", None):
+                client_kwargs["base_url"] = emb_cfg.base_url
+            emb_client = AsyncOpenAI(**client_kwargs)
         else:
             raise ValueError(
                 f"Unsupported embedding provider for Ragas: '{emb_provider}'. "

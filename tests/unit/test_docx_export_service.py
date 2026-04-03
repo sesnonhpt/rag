@@ -161,3 +161,35 @@ def test_append_image_to_docx_uses_converted_stream_on_direct_failure(monkeypatc
     assert doc.picture_calls
     assert isinstance(doc.picture_calls[0]["source"], BytesIO)
     assert doc.picture_calls[0]["width"] == 3.8
+
+
+def test_build_lesson_docx_bytes_prefers_embedded_image_bytes(monkeypatch):
+    holder = {}
+
+    def _document_factory():
+        doc = _FakeDocument()
+        holder["doc"] = doc
+        return doc
+
+    monkeypatch.setattr(
+        svc,
+        "_get_docx_imports",
+        lambda: {
+            "Document": _document_factory,
+            "WD_ALIGN_PARAGRAPH": SimpleNamespace(CENTER="CENTER"),
+            "qn": lambda key: key,
+            "Inches": lambda value: value,
+            "Pt": lambda value: value,
+        },
+    )
+    monkeypatch.setattr(svc, "_decode_embedded_image", lambda src, resolver: BytesIO(b"embedded-image"))
+
+    output = svc.build_lesson_docx_bytes(
+        content_html="<p><img src='/embedded.png' alt='配图'/></p>",
+        resolve_image_path=lambda src: None,
+        resolve_image_bytes=lambda src: b"raw-image" if src == "/embedded.png" else None,
+    )
+
+    assert output == b"DOCX"
+    assert holder["doc"].picture_calls
+    assert isinstance(holder["doc"].picture_calls[0]["source"], BytesIO)
