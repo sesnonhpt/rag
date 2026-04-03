@@ -94,10 +94,15 @@ class RetrieverAgent:
 
         citations: List[Dict[str, Any]] = []
         for result in relevant_results:
+            result_metadata = result.metadata or {}
             citations.append(
                 {
-                    "source": self.sanitize_source_path((result.metadata or {}).get("source_path", "unknown")),
+                    "source": self.sanitize_source_path(result_metadata.get("source_path", "unknown")),
                     "score": round(float(getattr(result, "score", 0.0) or 0.0), 4),
+                    "display_score": round(
+                        float(result_metadata.get("original_score", getattr(result, "score", 0.0)) or 0.0),
+                        4,
+                    ),
                     "text": str(result.text or "")[:200],
                 }
             )

@@ -67,7 +67,7 @@ async def generate_chat_response(req: Any, request: Any) -> Any:
     citations = [
         Citation(
             source=sanitize_source_path((r.metadata or {}).get("source_path", "unknown")),
-            score=round(r.score, 4),
+            score=round(float((r.metadata or {}).get("original_score", r.score) or 0.0), 4),
             text=(r.text or "")[:200],
         )
         for r in results

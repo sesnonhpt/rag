@@ -176,7 +176,7 @@ def generate_lesson_plan_internal(
     citations = [
         Citation(
             source=str(item.get("source") or "unknown"),
-            score=float(item.get("score") or 0.0),
+            score=float(item.get("display_score", item.get("score")) or 0.0),
             text=str(item.get("text") or ""),
         )
         for item in (orchestration_output.get("citations") or [])
