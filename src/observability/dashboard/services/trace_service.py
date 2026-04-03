@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import httpx
 
 from src.core.settings import resolve_path
 
@@ -29,6 +32,7 @@ class TraceService:
 
     def __init__(self, traces_path: Optional[str | Path] = None) -> None:
         self.traces_path = Path(traces_path) if traces_path else DEFAULT_TRACES_PATH
+        self.api_base_url = str(os.environ.get("API_BASE_URL", "") or "").strip().rstrip("/")
 
     # ------------------------------------------------------------------
     # Public API
@@ -106,6 +110,10 @@ class TraceService:
 
         Silently skips malformed lines.
         """
+        remote_traces = self._load_all_from_api()
+        if remote_traces is not None:
+            return remote_traces
+
         if not self.traces_path.exists():
             return []
 
@@ -120,6 +128,24 @@ class TraceService:
                 except json.JSONDecodeError:
                     logger.debug("Skipping malformed trace line: %s", line[:80])
         return traces
+
+    def _load_all_from_api(self) -> Optional[List[Dict[str, Any]]]:
+        if not self.api_base_url:
+            return None
+
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(f"{self.api_base_url}/traces", params={"limit": 500})
+                response.raise_for_status()
+                payload = response.json()
+        except Exception as exc:
+            logger.warning("TraceService API fallback failed: %r", exc)
+            return None
+
+        traces = payload.get("traces", [])
+        if not isinstance(traces, list):
+            return []
+        return [item for item in traces if isinstance(item, dict)]
 
     @staticmethod
     def _parse_iso_ts(value: Any) -> Optional[datetime]:

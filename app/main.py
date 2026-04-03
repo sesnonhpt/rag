@@ -11,6 +11,7 @@ from app.core.paths import STATIC_DIR
 from app.routers.assets import router as assets_router
 from app.routers.chat import router as chat_router
 from app.routers.lesson import router as lesson_router
+from app.routers.traces import router as traces_router
 
 
 app = FastAPI(title="RAG Chat API", lifespan=lifespan)
@@ -30,3 +31,4 @@ app.add_exception_handler(Exception, global_exception_handler)
 app.include_router(assets_router)
 app.include_router(chat_router)
 app.include_router(lesson_router)
+app.include_router(traces_router)
