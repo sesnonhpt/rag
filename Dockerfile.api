@@ -30,6 +30,7 @@ RUN pip install --no-cache-dir uv && \
     pyyaml==6.0.2 \
     openai==1.50.0 \
     jieba==0.42.1 \
+    Pillow==12.1.0 \
     beautifulsoup4==4.12.3 \
     python-docx==1.2.0 \
     ragas==0.1.0 \

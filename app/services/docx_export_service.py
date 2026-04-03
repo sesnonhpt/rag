@@ -67,14 +67,18 @@ def _configure_docx_styles(document: Any) -> None:
 
 def _build_docx_compatible_image_stream(image_path: Path) -> Optional[BytesIO]:
     try:
-        from PIL import Image, ImageOps
+        from PIL import Image, ImageFile, ImageOps
     except ImportError:
         logger.warning("lesson_docx.pillow_missing path=%s", image_path)
         return None
 
     try:
+        # Some textbook-exported images are progressive/CMYK/truncated.
+        # Let Pillow decode them as permissively as possible, then normalize.
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
         with Image.open(image_path) as image:
             normalized = ImageOps.exif_transpose(image)
+            normalized.load()
             if normalized.mode not in {"RGB", "L"}:
                 normalized = normalized.convert("RGB")
 
