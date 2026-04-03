@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.core.lesson_content_helpers import resolve_docx_image_path
 from app.core.runtime_helpers import build_api_error_detail, format_sse_event
@@ -96,8 +96,27 @@ async def export_lesson_plan_docx(req: ExportDocxRequest, request: Request):
             content_html=req.content_html,
             resolve_image_path=lambda src: resolve_docx_image_path(src, image_storage),
         )
+        ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", filename).strip("._") or "lesson-plan"
+        headers = {
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_filename}.docx"; '
+                f"filename*=UTF-8''{quote(filename, safe='')}.docx"
+            ),
+            "Content-Length": str(len(docx_bytes)),
+        }
+        logger.info(
+            "Lesson DOCX export succeeded title=%r size=%s html_length=%s",
+            filename,
+            len(docx_bytes),
+            len(req.content_html or ""),
+        )
+        return Response(
+            content=docx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers=headers,
+        )
     except Exception as e:
-        logger.exception("Lesson DOCX export failed")
+        logger.exception("Lesson DOCX export failed title=%r html_length=%s", req.title, len(req.content_html or ""))
         error_text = str(e).strip() or repr(e)
         raise HTTPException(
             status_code=500,
@@ -107,19 +126,6 @@ async def export_lesson_plan_docx(req: ExportDocxRequest, request: Request):
                 stage="lesson_docx_export",
             ),
         ) from e
-
-    ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", filename).strip("._") or "lesson-plan"
-    headers = {
-        "Content-Disposition": (
-            f'attachment; filename="{ascii_filename}.docx"; '
-            f"filename*=UTF-8''{quote(filename)}.docx"
-        ),
-    }
-    return StreamingResponse(
-        BytesIO(docx_bytes),
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers=headers,
-    )
 
 
 @router.post("/lesson-plan/stream")

@@ -81,6 +81,8 @@ def _build_docx_compatible_image_stream(image_path: Path) -> Optional[BytesIO]:
             normalized.load()
             if normalized.mode not in {"RGB", "L"}:
                 normalized = normalized.convert("RGB")
+            # Keep exported lesson images lightweight to reduce DOCX memory usage.
+            normalized.thumbnail((500, 500))
 
             buffer = BytesIO()
             normalized.save(buffer, format="PNG")
