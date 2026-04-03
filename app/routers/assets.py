@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from io import BytesIO
+import mimetypes
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from app.core.lesson_content_helpers import find_image_file_by_id, resolve_image_file_path
 from app.core.paths import STATIC_DIR
@@ -12,6 +14,33 @@ from src.observability.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+_WEB_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+_CONVERTIBLE_EXTENSIONS = {".jpx", ".jp2", ".j2k", ".jpf", ".tif", ".tiff"}
+
+
+def _stream_web_compatible_image(path: Path):
+    suffix = path.suffix.lower()
+    if suffix in _WEB_IMAGE_EXTENSIONS:
+        media_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type)
+
+    if suffix in _CONVERTIBLE_EXTENSIONS:
+        try:
+            from PIL import Image, ImageOps
+
+            with Image.open(path) as image:
+                normalized = ImageOps.exif_transpose(image)
+                if normalized.mode not in {"RGB", "L"}:
+                    normalized = normalized.convert("RGB")
+                buffer = BytesIO()
+                normalized.save(buffer, format="PNG")
+                buffer.seek(0)
+                return StreamingResponse(buffer, media_type="image/png")
+        except Exception as exc:
+            logger.warning("lesson_image.convert_failed path=%s error=%r", path, exc)
+
+    return FileResponse(path, media_type="application/octet-stream")
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -69,7 +98,7 @@ async def serve_lesson_plan_image(image_id: str, request: Request):
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Image file not found")
 
-    return FileResponse(path)
+    return _stream_web_compatible_image(path)
 
 
 @router.get("/health", response_model=HealthResponse)
