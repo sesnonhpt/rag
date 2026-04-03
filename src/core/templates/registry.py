@@ -19,8 +19,8 @@ TEMPLATE_CATEGORY_DEFINITIONS: List[TemplateCategoryDefinition] = [
     TemplateCategoryDefinition(
         category="comprehensive",
         template_type="comprehensive_master",
-        label="综合模版(增强版)",
-        description="💡 综合模版(增强版)：融合教学设计、学生任务、互动设计、分层训练与配图讲解，生成增强版成稿",
+        label="综合模版",
+        description="💡 综合模版：融合教学设计、学生任务、互动设计、分层训练与配图讲解，生成增强版成稿",
         default=True,
     ),
     TemplateCategoryDefinition(

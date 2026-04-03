@@ -68,6 +68,16 @@ services:
       - key: QDRANT_VECTOR_DIM
         value: "2560"
 
+      # Rerank（默认开启 LLM 重排，提升检索质量）
+      - key: RERANK_ENABLED
+        value: "true"
+      - key: RERANK_PROVIDER
+        value: "llm"
+      - key: RERANK_MODEL
+        value: "gpt-4o-mini"
+      - key: RERANK_TOP_K
+        value: "10"
+
       # BM25 索引文件（如果 ingestion 在本地做了的话）
       # 上传 data/bm25_index.json 到 Render Disk 或外部存储后填路径
       # 建议：Render Starter plan ($7/月）挂载 Render Disk 持久化 BM25
