@@ -104,6 +104,28 @@ def _append_image_to_docx(
     imports = _get_docx_imports()
     image_path = resolve_image_path(src)
     if image_path and image_path.exists():
+        suffix = image_path.suffix.lower()
+        prefer_normalized_insert = suffix in {".jpg", ".jpeg", ".jpx", ".jp2", ".j2k", ".jpf", ".tif", ".tiff"}
+        if prefer_normalized_insert:
+            converted_stream = _build_docx_compatible_image_stream(image_path)
+            if converted_stream is not None:
+                try:
+                    paragraph = document.add_paragraph()
+                    paragraph.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
+                    run = paragraph.add_run()
+                    run.add_picture(converted_stream, width=imports["Inches"](3.8))
+                    if alt_text:
+                        caption = document.add_paragraph()
+                        caption.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
+                        caption.add_run(alt_text)
+                    return
+                except Exception as normalized_error:
+                    logger.warning(
+                        "lesson_docx.normalized_image_failed path=%s error=%r",
+                        image_path,
+                        normalized_error,
+                    )
+
         try:
             paragraph = document.add_paragraph()
             paragraph.alignment = imports["WD_ALIGN_PARAGRAPH"].CENTER
