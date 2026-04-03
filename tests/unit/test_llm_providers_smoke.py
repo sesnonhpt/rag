@@ -185,6 +185,7 @@ class TestOpenAILLM:
         llm = OpenAILLM(settings, api_key="test-key")
         assert llm.api_key == "test-key"
         assert llm.model == "gpt-4o-mini"
+        assert llm.request_timeout == 180.0
     
     def test_init_with_env_var(self):
         """Should initialize with API key from environment."""
@@ -192,6 +193,13 @@ class TestOpenAILLM:
         with patch.dict("os.environ", {"OPENAI_API_KEY": "env-key"}):
             llm = OpenAILLM(settings)
             assert llm.api_key == "env-key"
+
+    def test_init_with_timeout_env_var(self):
+        """Should initialize request timeout from environment."""
+        settings = MockSettings()
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "env-key", "OPENAI_LLM_TIMEOUT_SEC": "75"}):
+            llm = OpenAILLM(settings)
+            assert llm.request_timeout == 75.0
     
     def test_init_missing_api_key(self):
         """Should raise error when API key is missing."""
@@ -254,6 +262,20 @@ class TestOpenAILLM:
             
             with pytest.raises(OpenAILLMError, match="API error"):
                 llm.chat([Message(role="user", content="Hello")])
+
+    def test_chat_uses_configured_timeout(self):
+        """Should pass configured timeout into the HTTP client."""
+        settings = MockSettings()
+        llm = OpenAILLM(settings, api_key="test-key", timeout=42.0)
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = (
+                make_mock_response("Test response", "gpt-4o-mini")
+            )
+
+            llm.chat([Message(role="user", content="Hello")])
+
+            mock_client.assert_called_once_with(timeout=42.0)
 
 
 # -----------------------------------------------------------------------------

@@ -38,6 +38,7 @@ class OpenAILLM(BaseLLM):
     """
     
     DEFAULT_BASE_URL = "https://api.openai.com/v1"
+    DEFAULT_TIMEOUT_SECONDS = 180.0
     
     def __init__(
         self,
@@ -64,6 +65,9 @@ class OpenAILLM(BaseLLM):
         self.model = settings.llm.model
         self.default_temperature = settings.llm.temperature
         self.default_max_tokens = settings.llm.max_tokens
+        self.request_timeout = float(
+            kwargs.pop("timeout", os.environ.get("OPENAI_LLM_TIMEOUT_SEC", self.DEFAULT_TIMEOUT_SECONDS))
+        )
         
         # API key: explicit > settings > env var
         self.api_key = (
@@ -208,7 +212,7 @@ class OpenAILLM(BaseLLM):
         }
         
         try:
-            with httpx.Client(timeout=180.0) as client:
+            with httpx.Client(timeout=self.request_timeout) as client:
                 response = client.post(url, json=payload, headers=headers)
                 
                 if response.status_code != 200:
@@ -220,7 +224,7 @@ class OpenAILLM(BaseLLM):
                 return response.json()
         except httpx.TimeoutException as e:
             raise OpenAILLMError(
-                f"[OpenAI] Request timed out after 180 seconds"
+                f"[OpenAI] Request timed out after {self.request_timeout:g} seconds"
             ) from e
         except httpx.RequestError as e:
             raise OpenAILLMError(

@@ -29,6 +29,18 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+def _get_timeout_from_env(primary_key: str, default: str, *fallback_keys: str) -> float:
+    raw_value = os.environ.get(primary_key)
+    if raw_value is None:
+        for fallback_key in fallback_keys:
+            raw_value = os.environ.get(fallback_key)
+            if raw_value is not None:
+                break
+    if raw_value is None:
+        raw_value = default
+    return float(raw_value)
+
+
 @router.get("/lesson-template-categories", response_model=LessonTemplateCategoriesResponse)
 async def get_lesson_template_categories():
     return LessonTemplateCategoriesResponse(
@@ -53,7 +65,11 @@ async def delete_lesson_history(record_id: int, request: Request):
 
 @router.post("/lesson-plan", response_model=LessonPlanResponse)
 async def generate_lesson_plan(req: LessonPlanRequest, request: Request):
-    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "85"))
+    lesson_timeout_sec = _get_timeout_from_env(
+        "LESSON_PLAN_REQUEST_TIMEOUT_SEC",
+        "85",
+        "LESSON_PLAN_TIMEOUT_SEC",
+    )
     try:
         response_payload = await asyncio.wait_for(
             asyncio.to_thread(
@@ -128,7 +144,11 @@ async def export_lesson_plan_docx(req: ExportDocxRequest, request: Request):
 
 @router.post("/lesson-plan/stream")
 async def stream_lesson_plan(req: LessonPlanRequest, request: Request):
-    lesson_timeout_sec = float(os.environ.get("LESSON_PLAN_TIMEOUT_SEC", "180"))
+    lesson_timeout_sec = _get_timeout_from_env(
+        "LESSON_PLAN_STREAM_TIMEOUT_SEC",
+        "180",
+        "LESSON_PLAN_TIMEOUT_SEC",
+    )
 
     async def event_stream():
         queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
