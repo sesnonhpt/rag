@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import re
 from typing import Any, Dict, Optional
@@ -11,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from app.core.lesson_content_helpers import resolve_docx_image_path
+from app.core.paths import APP_ROOT
 from app.core.runtime_helpers import build_api_error_detail, format_sse_event
 from app.schemas.api_models import (
     ExportDocxRequest,
@@ -27,6 +29,40 @@ from src.observability.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+MOCK_LESSON_DATA_FILE = APP_ROOT / "mock_data" / "lesson_plan_mocks.json"
+
+
+def _normalize_mock_topic(topic: str) -> str:
+    normalized = re.sub(r"\s+", "", str(topic or ""))
+    normalized = normalized.rstrip("？?！!。.")
+    return normalized
+
+
+def _is_lesson_plan_mock_enabled() -> bool:
+    # Toggle for topic/template mock responses.
+    # Set LESSON_PLAN_MOCK_ENABLED=0 to fully disable mock mode
+    # and send every request through the real generation pipeline.
+    return os.environ.get("LESSON_PLAN_MOCK_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _load_mock_lesson_index() -> Dict[str, Dict[str, Dict[str, Any]]]:
+    if not MOCK_LESSON_DATA_FILE.exists():
+        raise HTTPException(status_code=500, detail=f"mock数据文件不存在: {MOCK_LESSON_DATA_FILE.name}")
+
+    try:
+        raw_records = json.loads(MOCK_LESSON_DATA_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"mock数据文件解析失败: {exc}") from exc
+
+    index: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for item in raw_records:
+        topic = _normalize_mock_topic(str(item.get("topic") or ""))
+        template_category = str(item.get("template_category") or "comprehensive").strip() or "comprehensive"
+        if not topic:
+            continue
+        index.setdefault(topic, {})[template_category] = item
+    return index
 
 
 def _get_timeout_from_env(primary_key: str, default: str, *fallback_keys: str) -> float:
@@ -54,6 +90,42 @@ async def get_lesson_history(request: Request, session_id: Optional[str] = None,
     safe_limit = max(1, min(limit, 20))
     records = storage.list_records(limit=safe_limit, session_id=session_id)
     return LessonHistoryResponse(records=records)
+
+
+@router.post("/lesson-plan/mock", response_model=LessonPlanResponse)
+async def generate_mock_lesson_plan(req: LessonPlanRequest, request: Request):
+    if not _is_lesson_plan_mock_enabled():
+        raise HTTPException(status_code=404, detail="mock模式已关闭")
+
+    normalized_topic = _normalize_mock_topic(req.topic)
+    template_records = _load_mock_lesson_index().get(normalized_topic) or {}
+    template_category = str(req.template_category or "comprehensive").strip() or "comprehensive"
+    record = template_records.get(template_category)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"未命中 mock 主题/模版: {req.topic} / {template_category}",
+        )
+
+    await asyncio.sleep(3)
+
+    return LessonPlanResponse(
+        topic=str(record.get("topic") or req.topic),
+        subject=record.get("subject"),
+        lesson_content=str(record.get("lesson_content") or ""),
+        additional_resources=[],
+        image_resources=[],
+        review_report=None,
+        conversation_state=None,
+        history_records=[],
+        execution_plan={
+            "mode": "mock",
+            "source": str(MOCK_LESSON_DATA_FILE.name),
+            "template_category": template_category,
+        },
+        planning_mode=str(record.get("planning_mode") or "context_first"),
+        used_autonomous_fallback=bool(record.get("used_autonomous_fallback")),
+    )
 
 
 @router.delete("/lesson-history/{record_id}")

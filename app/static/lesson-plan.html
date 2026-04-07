@@ -631,7 +631,6 @@
       /* margin: 14px 0 18px; */
       color: var(--text-color);
       font-style: normal;
-      background: ;
       /* border-radius: 16px; */
       overflow-wrap: anywhere;
     }
@@ -867,7 +866,7 @@
         <span></span>
         <span></span>
       </div>
-      <div class="loading-text">正在生成内容，请稍候...</div>
+      <div class="loading-text">正在生成中</div>
     </div>
   </div>
 
@@ -887,10 +886,18 @@
     const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
     const HISTORY_STORAGE_KEY = 'lesson_plan_history_records';
     const historyList = document.getElementById('history-list');
+    // Toggle for topic/template mock responses.
+    // Set to false when you want every topic to use the real backend generation flow.
+    const ENABLE_TOPIC_TEMPLATE_MOCK = true;
 
     const templateCategorySelect = document.getElementById('template-category');
     const templateDescription = document.getElementById('template-description');
     const planningIndicator = document.getElementById('planning-indicator');
+    const MOCK_TOPIC_TEMPLATE_MAP = {
+      '牛顿第三定律': new Set(['teaching_design', 'comprehensive']),
+      '牛顿第二定律': new Set(['teaching_design', 'comprehensive']),
+      '速度和速率有什么区别': new Set(['comprehensive']),
+    };
     let conversationState = null;
     let historyRecords = [];
 
@@ -991,7 +998,7 @@
       generateBtn.disabled = show;
       exportDocBtn.disabled = show || !lessonContent.textContent.trim();
       if (!show && loadingText) {
-        loadingText.textContent = '正在生成内容，请稍候...';
+        loadingText.textContent = '正在生成中';
       }
     }
 
@@ -1016,6 +1023,20 @@
       text = text.replace(/(> [^\n]+)\n(?!>|\n)/g, '$1\n\n');
       text = text.replace(/\n{3,}/g, '\n\n');
       return text.trim();
+    }
+
+    function normalizeTopicForMock(topic) {
+      return String(topic || '')
+        .replace(/\s+/g, '')
+        .replace(/[？?！!。.]+$/g, '');
+    }
+
+    function shouldUseMockTopic(topic, templateCategory) {
+      if (!ENABLE_TOPIC_TEMPLATE_MOCK) return false;
+      const normalizedTopic = normalizeTopicForMock(topic);
+      const supportedTemplates = MOCK_TOPIC_TEMPLATE_MAP[normalizedTopic];
+      if (!supportedTemplates) return false;
+      return supportedTemplates.has(String(templateCategory || 'comprehensive'));
     }
 
     function estimateImageSharpness(img) {
@@ -1509,6 +1530,27 @@
       throw new Error('流式生成中断，请稍后重试');
     }
 
+    async function requestMockLessonPlan(requestBody) {
+      const response = await fetch('/lesson-plan/mock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        let errorText = `Mock接口错误 (${response.status})`;
+        try {
+          const data = await response.json();
+          errorText = formatApiError(data, errorText);
+        } catch {}
+        throw new Error(errorText);
+      }
+
+      return response.json();
+    }
+
     async function generateLessonPlan() {
       const topic = topicInput.value.trim();
       if (!topic) {
@@ -1530,8 +1572,19 @@
           conversation_state: conversationState,
         };
 
-        setLoadingText('正在启动流式生成...');
-        const data = await streamLessonPlan(requestBody);
+        let data;
+        if (shouldUseMockTopic(topic, templateCategory)) {
+          setLoadingText('正在生成中');
+          try {
+            data = await requestMockLessonPlan(requestBody);
+          } catch (error) {
+            setLoadingText('正在生成中');
+            data = await streamLessonPlan(requestBody);
+          }
+        } else {
+          setLoadingText('正在生成中');
+          data = await streamLessonPlan(requestBody);
+        }
         conversationState = data.conversation_state || null;
         if (conversationState) {
           localStorage.setItem(CONVERSATION_STATE_KEY, JSON.stringify(conversationState));
