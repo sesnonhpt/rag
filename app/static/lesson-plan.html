@@ -585,6 +585,14 @@
       overflow-wrap: anywhere;
     }
 
+    .markdown-content p.lesson-image-title {
+      text-align: center;
+      margin: 22px auto 10px;
+      color: #213547;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
     .markdown-content ul,
     .markdown-content ol {
       margin-bottom: 16px;
@@ -1177,6 +1185,12 @@
       });
 
       const images = Array.from(container.querySelectorAll('img'));
+      Array.from(container.querySelectorAll('p')).forEach((node) => {
+        const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (/^配图\d+[:：]/.test(text)) {
+          node.classList.add('lesson-image-title');
+        }
+      });
       images.forEach((img) => {
         const next = img.nextElementSibling;
         if (!next || next.tagName !== 'BLOCKQUOTE') return;
