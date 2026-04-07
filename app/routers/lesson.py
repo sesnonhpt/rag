@@ -117,7 +117,7 @@ async def generate_mock_lesson_plan(req: LessonPlanRequest, request: Request):
         topic=str(record.get("topic") or req.topic),
         subject=record.get("subject"),
         lesson_content=str(record.get("lesson_content") or ""),
-        additional_resources=[],
+        additional_resources=list(record.get("additional_resources") or []),
         image_resources=[],
         review_report=None,
         conversation_state=None,
