@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from app.core.lesson_content_helpers import find_image_file_by_id, resolve_image_file_path
 from app.core.paths import STATIC_DIR
-from app.schemas.api_models import HealthResponse
+from app.schemas.api_models import ClientConfigResponse, HealthResponse
 from src.observability.logger import get_logger
 
 router = APIRouter()
@@ -113,4 +113,11 @@ async def health(request: Request):
             "reranker": getattr(state, "reranker", None) is not None,
             "llm": getattr(state, "llm", None) is not None,
         },
+    )
+
+
+@router.get("/client-config", response_model=ClientConfigResponse)
+async def client_config(request: Request):
+    return ClientConfigResponse(
+        lesson_plan_mock_enabled=bool(getattr(request.app.state, "lesson_plan_mock_enabled", False)),
     )

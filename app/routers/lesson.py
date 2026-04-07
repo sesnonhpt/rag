@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import re
 from typing import Any, Dict, Optional
 from urllib.parse import quote
@@ -11,6 +10,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from app.core.app_runtime import is_lesson_plan_mock_enabled
 from app.core.lesson_content_helpers import resolve_docx_image_path
 from app.core.paths import APP_ROOT
 from app.core.runtime_helpers import build_api_error_detail, format_sse_event
@@ -39,14 +39,10 @@ def _normalize_mock_topic(topic: str) -> str:
     return normalized
 
 
-def _is_lesson_plan_mock_enabled() -> bool:
-    # Toggle for topic/template mock responses.
-    # Set LESSON_PLAN_MOCK_ENABLED=0 to fully disable mock mode
-    # and send every request through the real generation pipeline.
-    return os.environ.get("LESSON_PLAN_MOCK_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+def _normalize_mock_notes(notes: Optional[str]) -> str:
+    return re.sub(r"\s+", "", str(notes or "")).strip()
 
-
-def _load_mock_lesson_index() -> Dict[str, Dict[str, Dict[str, Any]]]:
+def _load_mock_lesson_records() -> list[Dict[str, Any]]:
     if not MOCK_LESSON_DATA_FILE.exists():
         raise HTTPException(status_code=500, detail=f"mock数据文件不存在: {MOCK_LESSON_DATA_FILE.name}")
 
@@ -55,14 +51,7 @@ def _load_mock_lesson_index() -> Dict[str, Dict[str, Dict[str, Any]]]:
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail=f"mock数据文件解析失败: {exc}") from exc
 
-    index: Dict[str, Dict[str, Dict[str, Any]]] = {}
-    for item in raw_records:
-        topic = _normalize_mock_topic(str(item.get("topic") or ""))
-        template_category = str(item.get("template_category") or "comprehensive").strip() or "comprehensive"
-        if not topic:
-            continue
-        index.setdefault(topic, {})[template_category] = item
-    return index
+    return [item for item in raw_records if isinstance(item, dict)]
 
 
 def _get_timeout_from_env(primary_key: str, default: str, *fallback_keys: str) -> float:
@@ -94,17 +83,32 @@ async def get_lesson_history(request: Request, session_id: Optional[str] = None,
 
 @router.post("/lesson-plan/mock", response_model=LessonPlanResponse)
 async def generate_mock_lesson_plan(req: LessonPlanRequest, request: Request):
-    if not _is_lesson_plan_mock_enabled():
+    if not is_lesson_plan_mock_enabled():
         raise HTTPException(status_code=404, detail="mock模式已关闭")
 
     normalized_topic = _normalize_mock_topic(req.topic)
-    template_records = _load_mock_lesson_index().get(normalized_topic) or {}
     template_category = str(req.template_category or "comprehensive").strip() or "comprehensive"
-    record = template_records.get(template_category)
+    normalized_notes = _normalize_mock_notes(req.notes)
+    candidates = [
+        item for item in _load_mock_lesson_records()
+        if _normalize_mock_topic(item.get("topic")) == normalized_topic
+        and str(item.get("template_category") or "comprehensive").strip() == template_category
+    ]
+    record = None
+    if normalized_notes:
+        for item in candidates:
+            if _normalize_mock_notes(item.get("notes")) == normalized_notes:
+                record = item
+                break
+    if record is None:
+        for item in candidates:
+            if not _normalize_mock_notes(item.get("notes")):
+                record = item
+                break
     if record is None:
         raise HTTPException(
             status_code=404,
-            detail=f"未命中 mock 主题/模版: {req.topic} / {template_category}",
+            detail=f"未命中 mock 主题/模版/备注: {req.topic} / {template_category} / {req.notes or ''}",
         )
 
     await asyncio.sleep(3)

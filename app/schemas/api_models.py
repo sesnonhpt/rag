@@ -93,3 +93,7 @@ class LessonTemplateCategoriesResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     components: dict
+
+
+class ClientConfigResponse(BaseModel):
+    lesson_plan_mock_enabled: bool = False

@@ -545,13 +545,25 @@ def is_result_relevant_to_topic(topic: str, result: Any) -> bool:
     topic_terms = _extract_topic_terms_for_filter(topic)
     if not topic_terms:
         return True
+    normalized_topic = re.sub(r"\s+", "", str(topic or "").lower())
     text_parts = [str(result.text or "").lower()]
     metadata = result.metadata or {}
     source_path = str(metadata.get("source_path", "") or "").lower()
     text_parts.append(source_path)
     combined_text = " ".join(text_parts)
+    combined_compact = re.sub(r"\s+", "", combined_text)
+
+    # Full-topic hit should pass directly; otherwise educational topics like
+    # "牛顿第二定律" get over-filtered by substring windows and lose citations/images.
+    if normalized_topic and normalized_topic in combined_compact:
+        return True
+
     matched_terms = [term for term in topic_terms if term in combined_text]
-    required_matches = 1 if len(topic_terms) <= 2 else 2
+    long_terms = [term for term in topic_terms if len(term) >= 4]
+    if any(term in combined_text for term in long_terms):
+        return True
+
+    required_matches = 1
     return len(matched_terms) >= required_matches
 
 

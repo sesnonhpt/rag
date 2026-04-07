@@ -76,3 +76,16 @@ async def test_global_exception_handler_returns_standard_payload():
 
     assert response.status_code == 500
     assert b"INTERNAL_SERVER_ERROR" in response.body
+
+
+def test_is_lesson_plan_mock_enabled_defaults_to_false(monkeypatch):
+    monkeypatch.delenv("LESSON_PLAN_MOCK_ENABLED", raising=False)
+
+    assert app_runtime.is_lesson_plan_mock_enabled() is False
+
+
+@pytest.mark.parametrize("raw_value", ["1", "true", "on", "yes"])
+def test_is_lesson_plan_mock_enabled_accepts_explicit_opt_in(monkeypatch, raw_value):
+    monkeypatch.setenv("LESSON_PLAN_MOCK_ENABLED", raw_value)
+
+    assert app_runtime.is_lesson_plan_mock_enabled() is True

@@ -886,18 +886,21 @@
     const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
     const HISTORY_STORAGE_KEY = 'lesson_plan_history_records';
     const historyList = document.getElementById('history-list');
-    // Toggle for topic/template mock responses.
-    // Set to false when you want every topic to use the real backend generation flow.
-    const ENABLE_TOPIC_TEMPLATE_MOCK = true;
+    // Frontend mock switch follows backend environment config from /client-config.
+    // Local can disable mock while production keeps it enabled.
+    let enableTopicTemplateMock = false;
 
     const templateCategorySelect = document.getElementById('template-category');
     const templateDescription = document.getElementById('template-description');
     const planningIndicator = document.getElementById('planning-indicator');
-    const MOCK_TOPIC_TEMPLATE_MAP = {
-      '牛顿第三定律': new Set(['teaching_design', 'comprehensive']),
-      '牛顿第二定律': new Set(['teaching_design', 'comprehensive']),
-      '速度和速率有什么区别': new Set(['comprehensive']),
-    };
+    const MOCK_RULES = [
+      { topic: '牛顿第三定律', templateCategory: 'teaching_design' },
+      { topic: '牛顿第三定律', templateCategory: 'comprehensive' },
+      { topic: '牛顿第二定律', templateCategory: 'teaching_design' },
+      { topic: '牛顿第二定律', templateCategory: 'comprehensive' },
+      { topic: '牛顿第二定律', templateCategory: 'guide', notes: '增加生活案例' },
+      { topic: '速度和速率有什么区别', templateCategory: 'comprehensive' },
+    ];
     let conversationState = null;
     let historyRecords = [];
 
@@ -986,6 +989,17 @@
       }
     }
 
+    async function loadClientConfig() {
+      try {
+        const response = await fetch('/client-config');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        enableTopicTemplateMock = !!data.lesson_plan_mock_enabled;
+      } catch {
+        enableTopicTemplateMock = false;
+      }
+    }
+
     function updateTemplateDescription() {
       const category = templateCategorySelect.value;
       templateDescription.textContent = templateDescriptionMap[category] || '';
@@ -1031,12 +1045,22 @@
         .replace(/[？?！!。.]+$/g, '');
     }
 
-    function shouldUseMockTopic(topic, templateCategory) {
-      if (!ENABLE_TOPIC_TEMPLATE_MOCK) return false;
+    function normalizeNotesForMock(notes) {
+      return String(notes || '').replace(/\s+/g, '').trim();
+    }
+
+    function shouldUseMockTopic(topic, templateCategory, notes) {
+      if (!enableTopicTemplateMock) return false;
       const normalizedTopic = normalizeTopicForMock(topic);
-      const supportedTemplates = MOCK_TOPIC_TEMPLATE_MAP[normalizedTopic];
-      if (!supportedTemplates) return false;
-      return supportedTemplates.has(String(templateCategory || 'comprehensive'));
+      const normalizedNotes = normalizeNotesForMock(notes);
+      return MOCK_RULES.some((rule) => {
+        if (rule.topic !== normalizedTopic) return false;
+        if (rule.templateCategory !== String(templateCategory || 'comprehensive')) return false;
+        if (Object.prototype.hasOwnProperty.call(rule, 'notes')) {
+          return normalizeNotesForMock(rule.notes) === normalizedNotes;
+        }
+        return true;
+      });
     }
 
     function estimateImageSharpness(img) {
@@ -1094,12 +1118,14 @@
         return { action: 'keep', sharpness, width, height };
       }
 
+      // Keep textbook figures visible. Some valid scanned diagrams are small,
+      // and hiding them entirely makes it look like generation returned no images.
       if (area < 28000 || shortSide < 120) {
-        return { action: 'hide', sharpness, width, height };
+        return { action: 'compact', sharpness, width, height };
       }
 
       if ((area < 90000 && sharpness < 10) || (shortSide < 180 && sharpness < 12)) {
-        return { action: 'hide', sharpness, width, height };
+        return { action: 'compact', sharpness, width, height };
       }
 
       if (area < 180000 || shortSide < 260 || sharpness < 14) {
@@ -1118,11 +1144,6 @@
         const target = wrapper || img;
 
         const decision = classifyImageQuality(img);
-        if (decision.action === 'hide') {
-          target.remove();
-          return;
-        }
-
         if (decision.action === 'compact') {
           target.classList.add('lesson-image-compact');
         }
@@ -1429,7 +1450,7 @@
           resourcesHtml += '</div>';
           resourcesContent.innerHTML = resourcesHtml;
         } else {
-          resourcesContent.innerHTML = '<p style="color: var(--text-light); padding: 16px;">未检索到相关文档（基于LLM自身知识生成）</p>';
+          resourcesContent.innerHTML = '<p style="color: var(--text-light); padding: 16px;">当前未展示参考文档，可能是本地索引未命中或结果经过过滤后为空。</p>';
         }
       }
     }
@@ -1566,14 +1587,14 @@
         const requestBody = {
           topic: topic,
           notes: notesInput.value.trim() || null,
-          collection: 'default',
+          collection: 'physics_fast20',
           model: modelSelect.value || null,
           template_category: templateCategory,
           conversation_state: conversationState,
         };
 
         let data;
-        if (shouldUseMockTopic(topic, templateCategory)) {
+        if (shouldUseMockTopic(topic, templateCategory, requestBody.notes)) {
           setLoadingText('正在生成中');
           try {
             data = await requestMockLessonPlan(requestBody);
@@ -1650,6 +1671,7 @@
       }
     });
 
+    loadClientConfig();
     loadTemplateCatalog();
     renderHistory();
     loadBackendHistory();

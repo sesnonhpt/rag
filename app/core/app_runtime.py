@@ -55,6 +55,13 @@ def build_components(settings: Any, collection: str) -> tuple:
     return hybrid_search, reranker
 
 
+def is_lesson_plan_mock_enabled() -> bool:
+    # Mock lesson-plan responses are guarded by an explicit feature flag.
+    # Keep the default disabled so only environments that opt in (for example
+    # online debugging / controlled production rollout) can use this path.
+    return os.environ.get("LESSON_PLAN_MOCK_ENABLED", "0").strip().lower() not in {"0", "false", "off", "no"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_path = os.environ.get("CHAT_CONFIG", str(_ROOT / "config" / "settings.yaml"))
@@ -79,6 +86,7 @@ async def lifespan(app: FastAPI):
     app.state.image_storage = image_storage
     app.state.history_storage = history_storage
     app.state.default_collection = collection
+    app.state.lesson_plan_mock_enabled = is_lesson_plan_mock_enabled()
 
     logger.info("Chat API components initialised successfully")
     yield
