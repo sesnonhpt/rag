@@ -39,6 +39,18 @@ def resolve_image_file_path(raw_path: Any) -> Path:
         return path_obj
 
     normalized = str(raw_path or "").replace("\\", "/")
+    static_index = normalized.find("/static/")
+    if static_index != -1:
+        remapped = _ROOT / "app" / normalized[static_index + len("/static/") :]
+        if remapped.exists():
+            return remapped
+
+    relative_static_index = normalized.find("static/")
+    if relative_static_index != -1:
+        remapped = _ROOT / "app" / normalized[relative_static_index:]
+        if remapped.exists():
+            return remapped
+
     data_images_index = normalized.find("/data/images/")
     if data_images_index != -1:
         remapped = _ROOT / normalized[data_images_index + 1 :]
