@@ -413,6 +413,56 @@
       border-bottom: none;
     }
 
+    .experiment-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-light);
+      margin-bottom: 10px;
+    }
+
+    .experiment-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9ca3af;
+    }
+
+    .experiment-status.enabled .experiment-status-dot {
+      background: var(--success-color);
+    }
+
+    .experiment-preview {
+      margin-top: 14px;
+      border: 1px dashed var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fcfcfd;
+    }
+
+    .experiment-preview img {
+      display: block;
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid rgba(24, 33, 38, 0.08);
+      background: #fff;
+    }
+
+    .experiment-preview-empty {
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-light);
+    }
+
+    .experiment-meta {
+      margin-top: 10px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-light);
+      word-break: break-word;
+    }
+
     .result-card-content ul {
       margin-left: 20px;
       margin-top: 8px;
@@ -692,10 +742,52 @@
 
     .markdown-content .lesson-image-block {
       margin: 24px 0 28px;
+      position: relative;
     }
 
     .markdown-content .lesson-image-block img {
       margin-bottom: 12px;
+    }
+
+    .markdown-content .lesson-image-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 auto 10px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .markdown-content .lesson-image-badge.lesson-image-badge-generated {
+      background: rgba(37, 83, 153, 0.10);
+      color: var(--primary-color);
+      border: 1px solid rgba(37, 83, 153, 0.16);
+    }
+
+    .markdown-content .lesson-image-badge.lesson-image-badge-retrieved {
+      background: rgba(17, 24, 39, 0.06);
+      color: var(--text-light);
+      border: 1px solid rgba(17, 24, 39, 0.10);
+    }
+
+    .image-origin-summary {
+      display: none;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: #fafbfd;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-light);
+    }
+
+    .image-origin-summary strong {
+      color: var(--text-color);
     }
 
     .markdown-content .lesson-image-block.lesson-image-compact img {
@@ -708,6 +800,27 @@
 
     .markdown-content blockquote.lesson-image-source {
       display: none;
+    }
+
+    .markdown-content p.lesson-ai-caption {
+      margin: 8px auto 14px;
+      text-align: center;
+      font-size: 12px;
+      color: #8b939f;
+      line-height: 1.6;
+      letter-spacing: 0;
+    }
+
+    .markdown-content blockquote.lesson-image-source.lesson-ai-caption {
+      display: block;
+      margin: 8px auto 14px;
+      padding: 0;
+      text-align: center;
+      font-size: 12px;
+      color: #8b939f;
+      line-height: 1.6;
+      border: none;
+      background: transparent;
     }
 
     .markdown-content strong {
@@ -837,9 +950,48 @@
             </select>
           </div>
 
+          <div class="form-group">
+            <small style="color: var(--text-light); display:block; line-height:1.7;">
+              如在备注中写“多一点图片”“需要配图”“补一张示意图”“图文并茂”“需要流程图/结构图”等，系统会自动判断是否补 1 张 AI 示意图；失败不会影响主流程。
+            </small>
+          </div>
+
           <div class="button-group">
             <button class="btn btn-primary" id="generate-btn">生成内容</button>
             <button class="btn btn-secondary" id="reset-btn">重置</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">LLM 生图实验</h2>
+          <p class="card-caption">先在页面侧验证独立生图闭环，不接入教案主流程。当前默认建议使用 gpt-image-1-mini；gpt-image-1.5 质量更高，但成本也更高，适合后续高质量场景再切换。</p>
+          <div class="experiment-status" id="image-experiment-status">
+            <span class="experiment-status-dot"></span>
+            <span id="image-experiment-status-text">正在检查服务配置...</span>
+          </div>
+
+          <div class="form-group">
+            <label for="image-prompt-input">生图提示词</label>
+            <textarea id="image-prompt-input" placeholder="例如：生成一张适合初中物理课堂的电磁感应概念示意图，包含线圈、磁场方向、感应电流关系，中文标签清晰。"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="image-style-select">风格</label>
+            <select id="image-style-select">
+              <option value="diagram_clean">简洁示意图</option>
+              <option value="education_illustration">教学插画</option>
+              <option value="minimal_infographic">极简信息图</option>
+            </select>
+          </div>
+
+          <div class="button-group">
+            <button class="btn btn-primary" id="generate-image-btn" type="button">生成图片</button>
+          </div>
+
+          <div class="experiment-preview" id="image-preview-panel">
+            <div class="experiment-preview-empty" id="image-preview-empty">这里会显示独立试验模块生成的图片结果。</div>
+            <img id="image-preview" alt="LLM 生图结果" style="display:none;" />
+            <div class="experiment-meta" id="image-preview-meta" style="display:none;"></div>
           </div>
         </div>
 
@@ -856,6 +1008,7 @@
             <h3 class="result-card-title" style="margin-bottom: 0;">生成内容</h3>
             <button class="btn btn-primary" id="export-doc-btn" type="button" disabled>导出 DOCX</button>
           </div>
+          <div class="image-origin-summary" id="image-origin-summary"></div>
           <div class="result-card-content markdown-content" id="lesson-content"></div>
         </div>
 
@@ -890,6 +1043,15 @@
     const exportDocBtn = document.getElementById('export-doc-btn');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingText = document.querySelector('.loading-text');
+    const imagePromptInput = document.getElementById('image-prompt-input');
+    const imageStyleSelect = document.getElementById('image-style-select');
+    const generateImageBtn = document.getElementById('generate-image-btn');
+    const imagePreview = document.getElementById('image-preview');
+    const imagePreviewEmpty = document.getElementById('image-preview-empty');
+    const imagePreviewMeta = document.getElementById('image-preview-meta');
+    const imageExperimentStatus = document.getElementById('image-experiment-status');
+    const imageExperimentStatusText = document.getElementById('image-experiment-status-text');
+    const imageOriginSummary = document.getElementById('image-origin-summary');
     const exportDocBtnDefaultText = exportDocBtn ? exportDocBtn.textContent : '导出 DOCX';
     const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
     const HISTORY_STORAGE_KEY = 'lesson_plan_history_records';
@@ -897,6 +1059,7 @@
     // Frontend mock switch follows backend environment config from /client-config.
     // Local can disable mock while production keeps it enabled.
     let enableTopicTemplateMock = false;
+    let imageGenerationEnabled = false;
 
     const templateCategorySelect = document.getElementById('template-category');
     const templateDescription = document.getElementById('template-description');
@@ -1007,9 +1170,22 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         enableTopicTemplateMock = !!data.lesson_plan_mock_enabled;
+        imageGenerationEnabled = !!data.image_generation_enabled;
+        updateImageExperimentStatus();
       } catch {
         enableTopicTemplateMock = false;
+        imageGenerationEnabled = false;
+        updateImageExperimentStatus();
       }
+    }
+
+    function updateImageExperimentStatus() {
+      if (!imageExperimentStatus || !imageExperimentStatusText) return;
+      imageExperimentStatus.classList.toggle('enabled', imageGenerationEnabled);
+      imageExperimentStatusText.textContent = imageGenerationEnabled
+        ? '已检测到图片生成配置，可直接试验'
+        : '未检测到图片生成配置，接口调用会失败';
+      generateImageBtn.disabled = false;
     }
 
     function updateTemplateDescription() {
@@ -1179,6 +1355,9 @@
       sourceNodes.forEach((node) => {
         const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
         if (!text) return;
+        if (text.includes('AI 生成教学示意图')) {
+          node.classList.add('lesson-ai-caption');
+        }
         if (text.startsWith('来源：') || text.includes('/data/images/') || text.includes('/data/pdf/')) {
           node.remove();
         }
@@ -1204,9 +1383,42 @@
         next.classList.add('lesson-image-source');
       });
 
+      Array.from(container.querySelectorAll('.lesson-image-block')).forEach((block) => {
+        const sourceText = String(block.textContent || '');
+        const isGenerated = sourceText.includes('AI 示意图') || sourceText.includes('gpt-image-1');
+        block.dataset.imageOrigin = isGenerated ? 'generated' : 'retrieved';
+
+        const badge = document.createElement('div');
+        badge.className = `lesson-image-badge ${isGenerated ? 'lesson-image-badge-generated' : 'lesson-image-badge-retrieved'}`;
+        badge.textContent = isGenerated ? 'AI 图' : '检索图';
+        block.insertBefore(badge, block.firstChild);
+      });
+
       Array.from(container.querySelectorAll('img')).forEach((img) => {
         applyImageQualityPolicy(img);
       });
+    }
+
+    function renderImageOriginSummary(imageResources = []) {
+      if (!imageOriginSummary) return;
+      const resources = Array.isArray(imageResources) ? imageResources : [];
+      if (!resources.length) {
+        imageOriginSummary.style.display = 'none';
+        imageOriginSummary.textContent = '';
+        return;
+      }
+
+      const generatedCount = resources.filter(item => item?.source_type === 'generated').length;
+      const retrievedCount = resources.filter(item => item?.source_type !== 'generated').length;
+      const parts = [];
+      if (retrievedCount > 0) {
+        parts.push(`<strong>${retrievedCount}</strong> 张检索图`);
+      }
+      if (generatedCount > 0) {
+        parts.push(`<strong>${generatedCount}</strong> 张 AI 图`);
+      }
+      imageOriginSummary.innerHTML = `图片来源：${parts.join('，')}。`;
+      imageOriginSummary.style.display = 'block';
     }
 
     async function exportCurrentLessonAsDocx() {
@@ -1260,6 +1472,25 @@
       if (loadingText) {
         loadingText.textContent = text;
       }
+    }
+
+    function setImageExperimentLoading(loading) {
+      if (!generateImageBtn) return;
+      generateImageBtn.disabled = loading;
+      generateImageBtn.textContent = loading ? '生成中...' : '生成图片';
+    }
+
+    function renderImageExperimentResult(payload) {
+      if (!payload || !payload.image_url) return;
+      imagePreview.src = `${payload.image_url}?t=${Date.now()}`;
+      imagePreview.style.display = 'block';
+      imagePreviewEmpty.style.display = 'none';
+      imagePreviewMeta.style.display = 'block';
+      imagePreviewMeta.innerHTML = `
+        <div>模型：${payload.model || 'unknown'}</div>
+        <div>风格：${payload.style || ''}</div>
+        <div><a href="${payload.image_url}" target="_blank" rel="noopener noreferrer">打开原图</a></div>
+      `;
     }
 
     function showError(message) {
@@ -1443,9 +1674,11 @@
       if (data.lesson_content) {
         lessonContent.innerHTML = marked.parse(normalizeLessonMarkdown(data.lesson_content));
         decorateLessonContent(lessonContent);
+        renderImageOriginSummary(data.image_resources || []);
         exportDocBtn.disabled = false;
       } else {
         lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无生成内容</p>';
+        renderImageOriginSummary([]);
         exportDocBtn.disabled = true;
       }
 
@@ -1590,6 +1823,51 @@
       return response.json();
     }
 
+    async function generateExperimentImage() {
+      const topic = topicInput.value.trim();
+      const prompt = imagePromptInput.value.trim() || (
+        topic
+          ? `生成一张适合课堂使用的“${topic}”教学示意图，中文标签清晰，结构关系明确。`
+          : ''
+      );
+
+      if (!prompt) {
+        showError('请先输入生图提示词，或先填写上方主题后再试。');
+        return;
+      }
+
+      setImageExperimentLoading(true);
+      try {
+        const response = await fetch('/experimental/image-generation', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt,
+            topic: topic || null,
+            style: imageStyleSelect.value,
+          }),
+        });
+
+        if (!response.ok) {
+          let errorText = `图片生成失败 (${response.status})`;
+          try {
+            const data = await response.json();
+            errorText = formatApiError(data, errorText);
+          } catch {}
+          throw new Error(errorText);
+        }
+
+        const payload = await response.json();
+        renderImageExperimentResult(payload);
+      } catch (error) {
+        showError(`生图试验失败：${error.message}`);
+      } finally {
+        setImageExperimentLoading(false);
+      }
+    }
+
     async function generateLessonPlan() {
       const topic = topicInput.value.trim();
       if (!topic) {
@@ -1681,6 +1959,7 @@
     generateBtn.addEventListener('click', generateLessonPlan);
     resetBtn.addEventListener('click', resetForm);
     exportDocBtn.addEventListener('click', exportCurrentLessonAsDocx);
+    generateImageBtn.addEventListener('click', generateExperimentImage);
 
     // 按Enter键生成内容
     topicInput.addEventListener('keydown', (e) => {

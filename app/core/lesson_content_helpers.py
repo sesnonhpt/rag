@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 from app.schemas.api_models import LessonImageResource, LessonReviewReportResponse
@@ -178,6 +178,81 @@ def _normalize_image_caption(caption: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+def _estimate_image_sharpness(path_obj: Path) -> float:
+    try:
+        from PIL import Image, ImageFile
+    except ImportError:
+        return 0.0
+
+    try:
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        with Image.open(path_obj) as image:
+            grayscale = image.convert("L")
+            grayscale.thumbnail((96, 96))
+            width, height = grayscale.size
+            if width < 2 or height < 2:
+                return 0.0
+            pixels = list(grayscale.getdata())
+            edge_energy = 0.0
+            comparisons = 0
+            for y in range(height - 1):
+                row_offset = y * width
+                next_row_offset = (y + 1) * width
+                for x in range(width - 1):
+                    idx = row_offset + x
+                    gray = pixels[idx]
+                    edge_energy += abs(gray - pixels[idx + 1])
+                    edge_energy += abs(gray - pixels[next_row_offset + x])
+                    comparisons += 2
+            return edge_energy / comparisons if comparisons else 0.0
+    except Exception:
+        return 0.0
+
+
+def _is_low_quality_lesson_image_file(path_obj: Path) -> bool:
+    try:
+        from PIL import Image, ImageFile
+    except ImportError:
+        return False
+
+    try:
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        with Image.open(path_obj) as image:
+            width, height = image.size
+    except Exception:
+        return False
+
+    area = width * height
+    short_side = min(width, height)
+    sharpness = _estimate_image_sharpness(path_obj)
+
+    if area < 25000 or short_side < 110:
+        return True
+    if area < 70000 and sharpness < 8:
+        return True
+    if area < 120000 and short_side < 180 and sharpness < 10:
+        return True
+    return False
+
+
+def _compute_lesson_image_fingerprint(path_obj: Path) -> Optional[str]:
+    try:
+        from PIL import Image, ImageFile
+
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        with Image.open(path_obj) as image:
+            grayscale = image.convert("L")
+            grayscale.thumbnail((12, 12))
+            pixels = list(grayscale.getdata())
+            if not pixels:
+                return None
+            average = sum(pixels) / len(pixels)
+            bits = "".join("1" if value >= average else "0" for value in pixels)
+            return f"{grayscale.size[0]}x{grayscale.size[1]}:{bits}"
+    except Exception:
+        return None
+
+
 def _is_effective_lesson_image(
     caption: Optional[str],
     source_path: Any,
@@ -280,8 +355,10 @@ def extract_image_resources(
     image_storage: Optional[ImageStorage] = None,
     collection: Optional[str] = None,
     max_images: int = 6,
+    topic: Optional[str] = None,
 ) -> List[LessonImageResource]:
     seen_ids = set()
+    seen_fingerprints: Set[str] = set()
     scored_resources: List[tuple[int, LessonImageResource]] = []
     doc_hashes = []
     preferred_pages: Dict[str, List[int]] = {}
@@ -294,6 +371,9 @@ def extract_image_resources(
         metadata = result.metadata or {}
         images = metadata.get("images", [])
         doc_hash = metadata.get("doc_hash")
+        source_path = metadata.get("source_path", "unknown")
+        if topic and not is_result_relevant_to_topic(str(topic), result):
+            continue
         if doc_hash and doc_hash not in doc_hashes:
             doc_hashes.append(doc_hash)
         page_num = metadata.get("page_num")
@@ -305,7 +385,6 @@ def extract_image_resources(
             continue
 
         caption_lookup = _extract_caption_lookup(metadata)
-        source_path = metadata.get("source_path", "unknown")
         placeholder_image_ids = _extract_image_ids_from_text(result.text)
 
         for image_info in images:
@@ -333,8 +412,29 @@ def extract_image_resources(
                     page_num,
                 )
                 continue
+            if _is_low_quality_lesson_image_file(path_obj):
+                logger.info(
+                    "lesson_image.direct_low_quality image_id=%s source=%s page=%s path=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                    path_obj,
+                )
+                continue
+            fingerprint = _compute_lesson_image_fingerprint(path_obj)
+            if fingerprint and fingerprint in seen_fingerprints:
+                logger.info(
+                    "lesson_image.direct_duplicate image_id=%s source=%s page=%s path=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                    path_obj,
+                )
+                continue
 
             seen_ids.add(image_id)
+            if fingerprint:
+                seen_fingerprints.add(fingerprint)
             rank_bonus = max(0, 8 - result_index)
             direct_kept_count += 1
             scored_resources.append(
@@ -376,7 +476,28 @@ def extract_image_resources(
                     page_num,
                 )
                 continue
+            if _is_low_quality_lesson_image_file(path_obj):
+                logger.info(
+                    "lesson_image.placeholder_low_quality image_id=%s source=%s page=%s path=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                    path_obj,
+                )
+                continue
+            fingerprint = _compute_lesson_image_fingerprint(path_obj)
+            if fingerprint and fingerprint in seen_fingerprints:
+                logger.info(
+                    "lesson_image.placeholder_duplicate image_id=%s source=%s page=%s path=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                    path_obj,
+                )
+                continue
             seen_ids.add(image_id)
+            if fingerprint:
+                seen_fingerprints.add(fingerprint)
             rank_bonus = max(0, 8 - result_index)
             direct_kept_count += 1
             scored_resources.append(
@@ -403,6 +524,17 @@ def extract_image_resources(
         return [resource for _, resource in scored_resources[:max_images]]
 
     for doc_hash in doc_hashes:
+        doc_topic_relevant = False
+        for result in results:
+            metadata = result.metadata or {}
+            if str(metadata.get("doc_hash") or "") != str(doc_hash):
+                continue
+            if not topic or is_result_relevant_to_topic(str(topic), result):
+                doc_topic_relevant = True
+                break
+        if not doc_topic_relevant:
+            continue
+
         try:
             indexed_images = image_storage.list_images(collection=collection, doc_hash=doc_hash)
         except Exception:
@@ -425,8 +557,27 @@ def extract_image_resources(
             path_obj = resolve_image_file_path(file_path)
             if not path_obj.exists():
                 continue
+            if _is_low_quality_lesson_image_file(path_obj):
+                logger.info(
+                    "lesson_image.indexed_low_quality image_id=%s page=%s path=%s",
+                    image_id,
+                    page_num,
+                    path_obj,
+                )
+                continue
+            fingerprint = _compute_lesson_image_fingerprint(path_obj)
+            if fingerprint and fingerprint in seen_fingerprints:
+                logger.info(
+                    "lesson_image.indexed_duplicate image_id=%s page=%s path=%s",
+                    image_id,
+                    page_num,
+                    path_obj,
+                )
+                continue
 
             seen_ids.add(image_id)
+            if fingerprint:
+                seen_fingerprints.add(fingerprint)
             page_bonus = 0
             doc_pages = preferred_pages.get(str(doc_hash), [])
             if isinstance(page_num, int) and doc_pages:
@@ -523,20 +674,24 @@ def _extract_topic_terms_for_filter(topic: str) -> List[str]:
         "教案", "模板", "综合模板", "导学案", "综合教学模板", "教学设计", "教学", "内容", "主题",
         "lesson", "guide", "template", "teaching",
     }
+    generic_terms = {
+        "第一", "第二", "第三", "第四", "第五", "第六", "第七", "第八", "第九", "第十",
+        "定律", "原理", "公式", "实验", "图表", "示意图", "结构图", "流程图", "图解",
+    }
     terms: List[str] = []
     for term in raw_terms:
         normalized = term.strip().lower()
-        if not normalized or normalized in stop_terms:
+        if not normalized or normalized in stop_terms or normalized in generic_terms:
             continue
         terms.append(normalized)
         if re.fullmatch(r"[\u4e00-\u9fff]{4,}", normalized):
             length = len(normalized)
-            for window in (2, 3, 4):
+            for window in (3, 4):
                 if length <= window:
                     continue
                 for start in range(0, length - window + 1):
                     piece = normalized[start:start + window]
-                    if piece not in stop_terms:
+                    if piece not in stop_terms and piece not in generic_terms:
                         terms.append(piece)
     return list(dict.fromkeys(terms))
 
@@ -596,26 +751,31 @@ def to_review_report_response(report: Any) -> Optional[LessonReviewReportRespons
 
 
 def _format_image_markdown_block(image: LessonImageResource, index: int) -> str:
-    title = f"![配图{index}]({image.url})"
+    label = image.caption.strip() if image.caption else ("AI 示意图" if image.source_type == "generated" else "教材配图")
+    title_line = f"**配图{index}：{label}**"
+    image_line = f"![配图{index}]({image.url})"
     caption_parts: List[str] = []
     if image.caption:
         caption_parts.append(image.caption.strip())
     if image.source:
         source_text = image.source
-        if image.page:
+        if image.source_type != "generated" and image.page:
             source_text += f" · 第 {image.page} 页"
+        if image.source_type == "generated" and image.model:
+            source_text += f" · {image.model}"
         caption_parts.append(f"来源：{source_text}")
     if caption_parts:
-        return f"{title}\n\n> " + " | ".join(caption_parts)
-    return title
+        return f"{title_line}\n\n{image_line}\n\n> " + " | ".join(caption_parts)
+    return f"{title_line}\n\n{image_line}"
 
 
 def _find_generic_image_anchor_indexes(lines: List[str]) -> List[int]:
     cue_pattern = re.compile(
-        r"(如图|见图|下图|上图|图示|示意图|插图|配图|图\s*\d+|图[一二三四五六七八九十])",
+        r"(如图|见图|下图|上图|图示|示意图|插图|图[一二三四五六七八九十])",
         flags=re.IGNORECASE,
     )
     image_line_pattern = re.compile(r"!\[配图\d+\]")
+    image_title_pattern = re.compile(r"^\*\*配图\d+：")
     anchors: List[int] = []
 
     for index, line in enumerate(lines):
@@ -623,6 +783,10 @@ def _find_generic_image_anchor_indexes(lines: List[str]) -> List[int]:
         if not stripped:
             continue
         if image_line_pattern.search(stripped):
+            continue
+        if image_title_pattern.search(stripped):
+            continue
+        if stripped.startswith(">"):
             continue
         if cue_pattern.search(stripped):
             anchors.append(index + 1)
@@ -655,31 +819,78 @@ def remove_dangling_image_references(content: str) -> str:
     return cleaned.strip()
 
 
+def renumber_image_references(content: str) -> str:
+    if not content:
+        return content
+
+    mapping: Dict[str, int] = {}
+    next_index = 1
+
+    for pattern in (r"\*\*配图(\d+)：", r"!\[配图(\d+)\]"):
+        for original in re.findall(pattern, content):
+            if original not in mapping:
+                mapping[original] = next_index
+                next_index += 1
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal next_index
+        original = match.group(1)
+        if original not in mapping:
+            mapping[original] = next_index
+            next_index += 1
+        return f"配图{mapping[original]}"
+
+    return re.sub(r"配图(\d+)", _replace, content)
+
+
 def integrate_images_into_markdown(
     lesson_plan_content: str,
     image_resources: List[LessonImageResource],
+    start_index: int = 1,
+    placement_strategy: str = "auto",
 ) -> str:
     if not lesson_plan_content or not image_resources:
         return lesson_plan_content
 
     lines = lesson_plan_content.splitlines()
+    image_lookup = {
+        index: image
+        for index, image in enumerate(image_resources, start=start_index)
+    }
     inserted_indices = set()
-    for index, image in enumerate(image_resources, start=1):
-        marker = f"配图{index}"
-        insertion_block = _format_image_markdown_block(image, index).splitlines()
-        for line_idx, line in enumerate(lines):
-            if marker in line:
-                insert_at = line_idx + 1
-                if insert_at < len(lines) and lines[insert_at].strip().startswith("![配图"):
-                    inserted_indices.add(index)
-                    break
-                block = [""] + insertion_block + [""]
-                lines[insert_at:insert_at] = block
-                inserted_indices.add(index)
-                break
+    marker_pattern = re.compile(r"配图(\d+)")
+    line_idx = 0
+    while line_idx < len(lines):
+        line = lines[line_idx]
+        matched_indices: List[int] = []
+        for match in marker_pattern.finditer(line):
+            marker_index = int(match.group(1))
+            if marker_index not in image_lookup or marker_index in inserted_indices:
+                continue
+            if marker_index not in matched_indices:
+                matched_indices.append(marker_index)
+        if matched_indices:
+            insert_at = line_idx + 1
+            if insert_at < len(lines) and lines[insert_at].strip().startswith("![配图"):
+                inserted_indices.update(matched_indices)
+                line_idx += 1
+                continue
+            block: List[str] = [""]
+            for marker_index in matched_indices:
+                block.extend(_format_image_markdown_block(image_lookup[marker_index], marker_index).splitlines())
+                block.append("")
+                inserted_indices.add(marker_index)
+            lines[insert_at:insert_at] = block
+            line_idx = insert_at + len(block)
+            continue
+        line_idx += 1
 
-    remaining = [(idx, image) for idx, image in enumerate(image_resources, start=1) if idx not in inserted_indices]
-    if remaining:
+    remaining = [
+        (idx, image_lookup[idx])
+        for idx in sorted(image_lookup)
+        if idx not in inserted_indices
+    ]
+    if remaining and placement_strategy != "append":
         cue_anchors = _find_generic_image_anchor_indexes(lines)
         inserted_offset = 0
         cue_index = 0
@@ -696,7 +907,7 @@ def integrate_images_into_markdown(
             inserted_offset += len(block)
         remaining = next_remaining
 
-    if remaining:
+    if remaining and placement_strategy != "append":
         section_anchor_indexes = [
             i + 1
             for i, line in enumerate(lines)
@@ -721,5 +932,10 @@ def integrate_images_into_markdown(
             block = [""] + _format_image_markdown_block(image, global_index).splitlines() + [""]
             lines[insert_at:insert_at] = block
             inserted_offset += len(block)
+
+    if remaining and placement_strategy == "append":
+        for global_index, image in remaining:
+            block = ["", *_format_image_markdown_block(image, global_index).splitlines(), ""]
+            lines.extend(block)
 
     return remove_dangling_image_references("\n".join(lines))

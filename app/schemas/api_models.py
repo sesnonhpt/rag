@@ -24,6 +24,10 @@ class LessonPlanRequest(BaseModel):
     include_examples: bool = Field(default=True, description="是否包含教学示例")
     template_category: Optional[str] = Field(default=None, description="模板类别")
     conversation_state: Optional[Dict[str, Any]] = Field(default=None, description="轻量会话状态")
+    allow_ai_visuals: bool = Field(
+        default=False,
+        description="兼容旧请求字段。当前前端已改为根据备注自动判断是否需要 AI 示意图。",
+    )
 
 
 class Citation(BaseModel):
@@ -38,6 +42,9 @@ class LessonImageResource(BaseModel):
     source: str
     page: Optional[int] = None
     caption: Optional[str] = None
+    source_type: str = "retrieved"
+    role: Optional[str] = None
+    model: Optional[str] = None
 
 
 class LessonReviewReportResponse(BaseModel):
@@ -97,3 +104,20 @@ class HealthResponse(BaseModel):
 
 class ClientConfigResponse(BaseModel):
     lesson_plan_mock_enabled: bool = False
+    image_generation_enabled: bool = False
+
+
+class ImageGenerationExperimentRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, description="图片生成提示词")
+    topic: Optional[str] = Field(default=None, description="关联主题")
+    style: str = Field(default="diagram_clean", description="试验风格")
+
+
+class ImageGenerationExperimentResponse(BaseModel):
+    image_url: str
+    image_path: str
+    filename: str
+    model: Optional[str] = None
+    style: str
+    prompt: str
+    topic: Optional[str] = None

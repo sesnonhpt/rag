@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from app.core.lesson_content_helpers import find_image_file_by_id, resolve_image_file_path
 from app.core.paths import STATIC_DIR
 from app.schemas.api_models import ClientConfigResponse, HealthResponse
+from app.services.image_generation_service import get_image_generation_config
 from src.observability.logger import get_logger
 
 router = APIRouter()
@@ -118,6 +119,8 @@ async def health(request: Request):
 
 @router.get("/client-config", response_model=ClientConfigResponse)
 async def client_config(request: Request):
+    image_generation_enabled = get_image_generation_config().enabled
     return ClientConfigResponse(
         lesson_plan_mock_enabled=bool(getattr(request.app.state, "lesson_plan_mock_enabled", False)),
+        image_generation_enabled=image_generation_enabled,
     )

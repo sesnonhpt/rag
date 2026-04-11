@@ -160,8 +160,15 @@ def _extract_image_resources(
     image_storage: Optional[ImageStorage] = None,
     collection: Optional[str] = None,
     max_images: int = 6,
+    topic: Optional[str] = None,
 ) -> List[LessonImageResource]:
-    return extract_image_resources(results, image_storage=image_storage, collection=collection, max_images=max_images)
+    return extract_image_resources(
+        results,
+        image_storage=image_storage,
+        collection=collection,
+        max_images=max_images,
+        topic=topic,
+    )
 
 
 def _prioritize_visual_results(results: List[Any], query_plan: Any) -> List[Any]:

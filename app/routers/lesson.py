@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import re
 from typing import Any, Dict, Optional
 from urllib.parse import quote

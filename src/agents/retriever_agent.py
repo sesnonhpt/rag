@@ -113,6 +113,7 @@ class RetrieverAgent:
                 relevant_results,
                 image_storage=self.image_storage,
                 collection=self.collection,
+                topic=topic,
             )
         logger.info(
             "lesson_retriever.images topic=%s enabled=%s relevant_results=%s image_resources=%s collection=%s",

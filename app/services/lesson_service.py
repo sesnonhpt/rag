@@ -16,6 +16,7 @@ from app.core.lesson_content_helpers import (
     prioritize_visual_results,
     sanitize_source_path,
     to_review_report_response,
+    renumber_image_references,
 )
 from app.core.prompt_builders import build_lesson_plan_prompt, build_lesson_plan_prompt_fallback
 from app.core.runtime_helpers import (
@@ -25,6 +26,7 @@ from app.core.runtime_helpers import (
     resolve_template_type_from_category,
 )
 from app.schemas.api_models import Citation, LessonPlanResponse
+from app.services.visual_asset_service import maybe_generate_visual_asset
 from src.agents import (
     ConversationAgent,
     LessonOrchestrator,
@@ -167,8 +169,26 @@ def generate_lesson_plan_internal(
     execution_plan = dict(orchestration_output["execution_plan"])
     query_plan = dict(orchestration_output["query_plan"])
     relevant_results = list(orchestration_output["results"] or [])
-    image_resources = list(orchestration_output["image_resources"] or [])
     lesson_plan_content = str(orchestration_output["lesson_plan_content"] or "")
+    image_resources = list(orchestration_output["image_resources"] or [])
+    existing_image_count = len(image_resources)
+    generated_visual = maybe_generate_visual_asset(
+        topic=req.topic,
+        notes=req.notes,
+        template_category=req.template_category,
+        existing_images=image_resources,
+        llm=llm,
+    )
+    if generated_visual is not None:
+        image_resources.append(generated_visual)
+        lesson_plan_content = integrate_images_into_markdown(
+            lesson_plan_content,
+            [generated_visual],
+            start_index=existing_image_count + 1,
+            placement_strategy="append",
+        )
+    if image_resources:
+        lesson_plan_content = renumber_image_references(lesson_plan_content)
     subject = orchestration_output.get("subject")
     review_report_payload = orchestration_output.get("review_report")
     generation_metadata = dict(orchestration_output.get("generation_metadata") or {})
