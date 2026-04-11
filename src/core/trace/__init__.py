@@ -8,5 +8,6 @@ This package contains tracing components:
 
 from src.core.trace.trace_context import TraceContext
 from src.core.trace.trace_collector import TraceCollector
+from src.core.trace.trace_storage import TraceStorage
 
-__all__ = ['TraceContext', 'TraceCollector']
+__all__ = ['TraceContext', 'TraceCollector', 'TraceStorage']

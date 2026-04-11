@@ -89,6 +89,8 @@ services:
       # Lesson 生成优化
       - key: LESSON_REVIEW_ENABLED
         value: "false"
+      - key: LESSON_PLAN_MOCK_ENABLED
+        value: "0"
       - key: LESSON_PLAN_REQUEST_TIMEOUT_SEC
         value: "120"
       - key: LESSON_PLAN_STREAM_TIMEOUT_SEC

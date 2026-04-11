@@ -261,6 +261,9 @@ class DataService:
 
         # 5. Clear trace logs
         try:
+            from src.core.trace.trace_storage import TraceStorage
+
+            TraceStorage().clear()
             traces_file = resolve_path("logs/traces.jsonl")
             if traces_file.exists():
                 traces_file.unlink()

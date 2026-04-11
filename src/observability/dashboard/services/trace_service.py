@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.core.settings import resolve_path
+from src.core.trace.trace_storage import TraceStorage
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class TraceService:
     def __init__(self, traces_path: Optional[str | Path] = None) -> None:
         self.traces_path = Path(traces_path) if traces_path else DEFAULT_TRACES_PATH
         self.api_base_url = str(os.environ.get("API_BASE_URL", "") or "").strip().rstrip("/")
+        self.storage = TraceStorage()
 
     # ------------------------------------------------------------------
     # Public API
@@ -113,6 +115,10 @@ class TraceService:
         remote_traces = self._load_all_from_api()
         if remote_traces is not None:
             return remote_traces
+
+        sqlite_traces = self.storage.list_traces(limit=1000)
+        if sqlite_traces:
+            return sqlite_traces
 
         if not self.traces_path.exists():
             return []

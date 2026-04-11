@@ -87,13 +87,10 @@ def render() -> None:
     # ── Trace file statistics ──────────────────────────────────────
     st.subheader("📈 Trace Statistics")
 
-    from src.core.settings import resolve_path
-    traces_path = resolve_path("logs/traces.jsonl")
-    if traces_path.exists():
-        line_count = sum(1 for _ in traces_path.open(encoding="utf-8"))
-        if line_count > 0:
-            st.metric("Total traces", line_count)
-        else:
-            st.info("No traces recorded yet. Run a query or ingestion first.")
+    from src.core.trace.trace_storage import TraceStorage
+
+    line_count = TraceStorage().count_traces()
+    if line_count > 0:
+        st.metric("Total traces", line_count)
     else:
         st.info("No traces recorded yet. Run a query or ingestion first.")

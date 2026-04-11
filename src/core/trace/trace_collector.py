@@ -13,6 +13,7 @@ from typing import Optional
 
 from src.core.settings import resolve_path
 from src.core.trace.trace_context import TraceContext
+from src.core.trace.trace_storage import TraceStorage
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class TraceCollector:
     def __init__(self, traces_path: str | Path = _DEFAULT_TRACES_PATH) -> None:
         self._path = Path(traces_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._storage = TraceStorage()
 
     def collect(self, trace: TraceContext) -> None:
         """Persist a single trace as one JSON line.
@@ -46,10 +48,13 @@ class TraceCollector:
 
         line = json.dumps(trace.to_dict(), ensure_ascii=False)
         try:
+            self._storage.upsert_trace(trace.to_dict())
             with self._path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
         except OSError:
             logger.exception("Failed to write trace %s", trace.trace_id)
+        except Exception:
+            logger.exception("Failed to persist trace %s", trace.trace_id)
 
     @property
     def path(self) -> Path:
