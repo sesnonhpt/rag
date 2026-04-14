@@ -12,7 +12,7 @@ from src.observability.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SUPPORTED_TEMPLATE_CATEGORIES = {"comprehensive", "teaching_design"}
+_SUPPORTED_TEMPLATE_CATEGORIES = {"comprehensive", "teaching_design", "ppt"}
 _SUPPORTED_IMAGE_STYLES = {"diagram_clean", "education_illustration", "minimal_infographic"}
 _AUTO_VISUAL_POSITIVE_KEYWORDS = (
     "多图片",

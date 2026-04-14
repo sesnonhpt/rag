@@ -35,6 +35,12 @@ TEMPLATE_CATEGORY_DEFINITIONS: List[TemplateCategoryDefinition] = [
         label="导学案模板",
         description="💡 导学案模板：自动判断学科，按学校导学案体例生成固定结构成稿",
     ),
+    TemplateCategoryDefinition(
+        category="ppt",
+        template_type="ppt_master",
+        label="PPT课件",
+        description="💡 PPT课件：按幻灯片页结构生成可投屏内容，突出页面标题、要点提炼、图文配合与讲解提示",
+    ),
 ]
 
 

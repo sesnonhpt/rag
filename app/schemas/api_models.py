@@ -84,6 +84,12 @@ class ExportDocxRequest(BaseModel):
     content_html: str = Field(..., min_length=1, description="当前教案正文 HTML")
 
 
+class ExportPptxRequest(BaseModel):
+    title: str = Field(..., min_length=1, description="导出文件标题")
+    content_html: str = Field(..., min_length=1, description="当前教案正文 HTML")
+    image_resources: List[LessonImageResource] = Field(default_factory=list, description="当前教案图片资源")
+
+
 class LessonHistoryResponse(BaseModel):
     records: List[Dict[str, Any]] = Field(default_factory=list)
 

@@ -17,6 +17,7 @@ from app.core.paths import APP_ROOT
 from app.core.runtime_helpers import build_api_error_detail, format_sse_event
 from app.schemas.api_models import (
     ExportDocxRequest,
+    ExportPptxRequest,
     LessonHistoryResponse,
     LessonPlanRequest,
     LessonPlanResponse,
@@ -25,6 +26,7 @@ from app.schemas.api_models import (
 )
 from app.services.docx_export_service import build_lesson_docx_bytes
 from app.services.lesson_service import generate_lesson_plan_internal
+from app.services.pptx_export_service import build_lesson_pptx_bytes
 from src.core.templates import get_template_categories_payload
 from src.observability.logger import get_logger
 
@@ -216,6 +218,49 @@ async def export_lesson_plan_docx(req: ExportDocxRequest, request: Request):
                 code="LESSON_DOCX_EXPORT_ERROR",
                 message=f"DOCX 导出失败: {error_text}"[:280],
                 stage="lesson_docx_export",
+            ),
+        ) from e
+
+
+@router.post("/lesson-plan/export-pptx")
+async def export_lesson_plan_pptx(req: ExportPptxRequest, request: Request):
+    try:
+        filename = re.sub(r'[\\/:*?"<>|]+', "_", req.title).strip() or "教案课件"
+        image_storage = getattr(request.app.state, "image_storage", None)
+        pptx_bytes = build_lesson_pptx_bytes(
+            title=filename,
+            content_html=req.content_html,
+            resolve_image_path=lambda src: resolve_docx_image_path(src, image_storage),
+            image_resources=req.image_resources,
+        )
+        ascii_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", filename).strip("._") or "lesson-slides"
+        headers = {
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_filename}.pptx"; '
+                f"filename*=UTF-8''{quote(filename, safe='')}.pptx"
+            ),
+            "Content-Length": str(len(pptx_bytes)),
+        }
+        logger.info(
+            "Lesson PPTX export succeeded title=%r size=%s html_length=%s",
+            filename,
+            len(pptx_bytes),
+            len(req.content_html or ""),
+        )
+        return Response(
+            content=pptx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers=headers,
+        )
+    except Exception as e:
+        logger.exception("Lesson PPTX export failed title=%r html_length=%s", req.title, len(req.content_html or ""))
+        error_text = str(e).strip() or repr(e)
+        raise HTTPException(
+            status_code=500,
+            detail=build_api_error_detail(
+                code="LESSON_PPTX_EXPORT_ERROR",
+                message=f"PPTX 导出失败: {error_text}"[:280],
+                stage="lesson_pptx_export",
             ),
         ) from e
 

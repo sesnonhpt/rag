@@ -126,7 +126,7 @@ class LessonAgent:
     def _insert_images(self, state: LessonAgentState) -> None:
         content = state.final_content or state.draft_content or ""
         effective_images = state.assets.image_resources
-        image_enabled_templates = {"comprehensive_master", "teaching_design_master", "guide_master"}
+        image_enabled_templates = {"comprehensive_master", "teaching_design_master", "guide_master", "ppt_master"}
         if self.resolved_template_type in image_enabled_templates and effective_images:
             content = self.integrate_images(content, effective_images)
 
@@ -419,7 +419,11 @@ class LessonAgent:
         template_label = (
             "综合模版"
             if self.request.template_category == "comprehensive"
-            else ("教学设计" if self.request.template_category == "teaching_design" else "导学案模板")
+            else (
+                "教学设计"
+                if self.request.template_category == "teaching_design"
+                else ("PPT课件" if self.request.template_category == "ppt" else "导学案模板")
+            )
         )
         system_prompt = (
             f"你是一名经验丰富的一线教师与教研组长。当前知识库未能提供与主题“{self.request.topic}”直接相关的有效上下文，"
@@ -435,6 +439,11 @@ class LessonAgent:
             system_prompt += (
                 "5. 产出风格必须像学校导学案，突出学习目标、重难点、基础部分、要点部分、拓展部分、目标检测，"
                 "以学生任务和题目驱动为主。\n"
+            )
+        elif self.request.template_category == "ppt":
+            system_prompt += (
+                "5. 产出风格必须像课堂PPT课件，按多页幻灯片组织内容，每页突出标题、3-5条要点、必要的图文提示和简短讲解提示。\n"
+                "6. 若当前没有可用配图，不要提到配图编号，也不要因为缺图而拒绝生成。\n"
             )
         elif self.request.template_category == "teaching_design":
             system_prompt += (

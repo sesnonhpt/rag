@@ -19,7 +19,7 @@ class QueryAgent:
         execution_plan: Optional[ExecutionPlan] = None,
     ) -> QueryPlan:
         category = template_category or "comprehensive"
-        image_focus = category == "comprehensive"
+        image_focus = category in {"comprehensive", "ppt"}
         if execution_plan is not None:
             image_focus = bool(execution_plan.need_images)
         search_queries: List[str] = [topic]
@@ -29,6 +29,11 @@ class QueryAgent:
         if category == "guide":
             search_queries.append(f"{topic} 学习目标 重难点 基础练习 拓展训练 课堂检测")
             search_queries.append(f"{topic} 教材知识点 例题 任务单")
+        elif category == "ppt":
+            search_queries.append(f"{topic} 核心概念 课堂讲解 案例 图文课件")
+            search_queries.append(f"{topic} 结构图 流程图 示意图 课堂展示")
+            image_queries.append(f"{topic} 结构图 流程图 示意图")
+            image_queries.append(f"{topic} 课堂案例 图片 图解")
         else:
             search_queries.append(f"{topic} {base_suffix} 课堂活动 案例")
             search_queries.append(f"{topic} 结构图 流程图 示意图 实验结果 图表")
@@ -51,7 +56,7 @@ class QueryAgent:
             user_query=topic,
             search_queries=dedup_search[:3],
             image_queries=dedup_image[:3],
-            intent="lesson_generation" if category == "comprehensive" else "guide_generation",
+            intent="guide_generation" if category == "guide" else "lesson_generation",
             image_focus=image_focus,
             reasoning=(
                 "Use template-aware + planner-aware query expansion and keep the plan lightweight for stateless deployment."

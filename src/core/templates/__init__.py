@@ -21,6 +21,7 @@ class TemplateType(Enum):
     GUIDE_MASTER = "guide_master"
     TEACHING_DESIGN_MASTER = "teaching_design_master"
     COMPREHENSIVE_MASTER = "comprehensive_master"
+    PPT_MASTER = "ppt_master"
 
 
 @dataclass
@@ -48,10 +49,12 @@ class TemplateManager:
             build_comprehensive_master_prompt,
             build_teaching_design_prompt,
         )
+        from .ppt_templates import build_ppt_master_prompt
 
         self.templates[TemplateType.GUIDE_MASTER] = build_guide_master_prompt
         self.templates[TemplateType.TEACHING_DESIGN_MASTER] = build_teaching_design_prompt
         self.templates[TemplateType.COMPREHENSIVE_MASTER] = build_comprehensive_master_prompt
+        self.templates[TemplateType.PPT_MASTER] = build_ppt_master_prompt
     
     def build_prompt(
         self,
