@@ -44,6 +44,26 @@ def test_should_generate_visual_asset_requires_visual_notes() -> None:
     ) is False
 
 
+def test_should_generate_visual_asset_respects_explicit_disable() -> None:
+    assert should_generate_visual_asset(
+        topic="法拉第与电磁感应",
+        notes="希望多一点图片",
+        template_category="comprehensive",
+        existing_images=[],
+        enabled=False,
+    ) is False
+
+
+def test_should_generate_visual_asset_respects_explicit_enable() -> None:
+    assert should_generate_visual_asset(
+        topic="法拉第与电磁感应",
+        notes="不需要图片",
+        template_category="comprehensive",
+        existing_images=[],
+        enabled=True,
+    ) is True
+
+
 def test_should_generate_visual_asset_limits_supported_templates() -> None:
     assert should_generate_visual_asset(
         topic="法拉第与电磁感应",
@@ -114,3 +134,35 @@ def test_maybe_generate_visual_asset_returns_generated_resource(monkeypatch) -> 
     assert resource.source_type == "generated"
     assert resource.role == "supporting_visual"
     assert resource.model == "gpt-image-1-mini"
+
+
+def test_maybe_generate_visual_asset_uses_prompt_override(monkeypatch) -> None:
+    class _FakeService:
+        def generate_image(self, *, prompt: str, style: str, topic: str | None):
+            assert prompt == "请生成一张用于课堂展示的牛顿第三定律教学示意图，中文标签清晰。"
+            assert style == "minimal_infographic"
+            return {
+                "image_url": "/static/generated-images/test.png",
+                "image_path": "/tmp/test.png",
+                "filename": "exp-test.png",
+                "model": "gpt-image-1-mini",
+                "style": style,
+                "prompt": prompt,
+                "topic": topic or "",
+            }
+
+    monkeypatch.setattr("app.services.visual_asset_service.ExperimentalImageGenerationService", _FakeService)
+
+    resource = maybe_generate_visual_asset(
+        topic="牛顿第三定律",
+        notes="不需要自动判断",
+        template_category="comprehensive",
+        existing_images=[],
+        llm=None,
+        enabled=True,
+        prompt_override="请生成一张用于课堂展示的牛顿第三定律教学示意图，中文标签清晰。",
+        style_override="minimal_infographic",
+    )
+
+    assert resource is not None
+    assert resource.source_type == "generated"

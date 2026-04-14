@@ -28,6 +28,9 @@ class LessonPlanRequest(BaseModel):
         default=False,
         description="兼容旧请求字段。当前前端已改为根据备注自动判断是否需要 AI 示意图。",
     )
+    ai_visual_enabled: Optional[bool] = Field(default=None, description="是否为当前教案启用 AI 示意图补充")
+    ai_visual_prompt: Optional[str] = Field(default=None, description="用户编辑后的 AI 生图提示词")
+    ai_visual_style: Optional[str] = Field(default=None, description="AI 生图风格")
 
 
 class Citation(BaseModel):
@@ -121,3 +124,15 @@ class ImageGenerationExperimentResponse(BaseModel):
     style: str
     prompt: str
     topic: Optional[str] = None
+
+
+class ImagePromptSuggestionRequest(BaseModel):
+    topic: str = Field(..., min_length=1, description="图片主题")
+    notes: Optional[str] = Field(default=None, description="教师备注或补充要求")
+    template_category: Optional[str] = Field(default="comprehensive", description="模板类别")
+
+
+class ImagePromptSuggestionResponse(BaseModel):
+    prompt: str
+    style: str
+    source: str = Field(default="fallback", description="prompt 生成来源：llm 或 fallback")

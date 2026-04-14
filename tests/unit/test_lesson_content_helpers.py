@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.core import lesson_content_helpers as helpers
 from app.core.lesson_content_helpers import integrate_images_into_markdown, renumber_image_references
@@ -52,6 +53,7 @@ def test_integrate_generated_images_marks_ai_source() -> None:
 
     output = integrate_images_into_markdown(content, [generated])
 
+    assert "**配图1：教材配图**" in output
     assert "AI 生成教学示意图" in output
     assert "AI 示意图 · gpt-image-1-mini" in output
 
@@ -137,3 +139,57 @@ def test_low_quality_image_file_detection(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("PIL.Image.open", lambda path: _FakeImage())
 
     assert helpers._is_low_quality_lesson_image_file(image_path) is True
+
+
+def test_supported_lesson_image_file_rejects_jpx() -> None:
+    assert helpers._is_supported_lesson_image_file(Path("/tmp/demo.jpx")) is False
+    assert helpers._is_supported_lesson_image_file(Path("/tmp/demo.jpeg")) is True
+
+
+def test_result_has_visual_reference_detects_figure_cues() -> None:
+    result = SimpleNamespace(text="如图所示，速度-时间图像反映运动状态。", metadata={})
+
+    assert helpers._result_has_visual_reference(result) is True
+
+
+def test_result_has_visual_reference_returns_false_for_plain_text() -> None:
+    result = SimpleNamespace(text="速度是描述运动快慢的物理量。", metadata={})
+
+    assert helpers._result_has_visual_reference(result) is False
+
+
+def test_should_reject_by_image_filter_report_uses_keep_and_hard_reject(monkeypatch) -> None:
+    monkeypatch.setattr(
+        helpers,
+        "_load_image_filter_report_index",
+        lambda: {
+            "bad-1": {"image_id": "bad-1", "keep": False},
+            "bad-2": {"image_id": "bad-2", "hard_reject": True},
+            "good-1": {"image_id": "good-1", "keep": True},
+        },
+    )
+
+    assert helpers._should_reject_by_image_filter_report("bad-1") is True
+    assert helpers._should_reject_by_image_filter_report("bad-2") is True
+    assert helpers._should_reject_by_image_filter_report("good-1") is False
+    assert helpers._should_reject_by_image_filter_report("missing") is False
+
+
+def test_load_image_filter_report_index_supports_dict_payload(tmp_path: Path, monkeypatch) -> None:
+    processed_dir = tmp_path / "data" / "processed"
+    processed_dir.mkdir(parents=True)
+    report_path = processed_dir / "demo.image-filter-report.json"
+    report_path.write_text(
+        '{"images":[{"image_id":"img-1","keep":false},{"image_id":"img-2","keep":true}]}',
+        encoding="utf-8",
+    )
+
+    helpers._load_image_filter_report_index.cache_clear()
+    monkeypatch.setattr(helpers, "_ROOT", tmp_path)
+
+    index = helpers._load_image_filter_report_index()
+
+    assert index["img-1"]["keep"] is False
+    assert index["img-2"]["keep"] is True
+
+    helpers._load_image_filter_report_index.cache_clear()

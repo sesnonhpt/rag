@@ -45,3 +45,26 @@ def test_experimental_image_generation_route(monkeypatch):
     payload = response.json()
     assert payload["image_url"] == "/static/generated-images/test.png"
     assert payload["style"] == "diagram_clean"
+
+
+def test_experimental_image_prompt_route(monkeypatch):
+    monkeypatch.setattr(
+        "app.routers.experiments.suggest_visual_generation_prompt",
+        lambda **kwargs: ("生成一张牛顿第三定律教学示意图，中文标签清晰。", "diagram_clean", "llm"),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/experimental/image-prompt",
+        json={
+            "topic": "牛顿第三定律",
+            "notes": "希望图文并茂一些",
+            "template_category": "comprehensive",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["prompt"].startswith("生成一张牛顿第三定律教学示意图")
+    assert payload["style"] == "diagram_clean"
+    assert payload["source"] == "llm"

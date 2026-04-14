@@ -178,6 +178,9 @@ def generate_lesson_plan_internal(
         template_category=req.template_category,
         existing_images=image_resources,
         llm=llm,
+        enabled=getattr(req, "ai_visual_enabled", None),
+        prompt_override=getattr(req, "ai_visual_prompt", None),
+        style_override=getattr(req, "ai_visual_style", None),
     )
     if generated_visual is not None:
         image_resources.append(generated_visual)

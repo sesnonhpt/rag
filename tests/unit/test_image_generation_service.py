@@ -44,6 +44,7 @@ def test_generate_image_saves_png(monkeypatch, tmp_path: Path):
     service = ExperimentalImageGenerationService(
         ImageGenerationConfig(
             enabled=True,
+            provider="openai_compatible",
             model="gpt-image-1",
             api_key="test-key",
             base_url="https://example.test/v1",
@@ -63,6 +64,7 @@ def test_generate_image_requires_configuration(tmp_path: Path):
     service = ExperimentalImageGenerationService(
         ImageGenerationConfig(
             enabled=False,
+            provider="openai_compatible",
             model=None,
             api_key=None,
             base_url=None,
@@ -102,6 +104,68 @@ def test_get_image_generation_config_falls_back_to_project_settings(monkeypatch,
     config = get_image_generation_config()
 
     assert config.enabled is True
+    assert config.provider == "openai_compatible"
     assert config.model == "gpt-image-1-mini"
     assert config.api_key == "llm-key"
     assert config.base_url == "https://aihubmix.com/v1"
+
+
+def test_get_image_generation_config_supports_gemini_provider(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("IMAGE_GENERATION_PROVIDER", "gemini")
+    monkeypatch.delenv("IMAGE_GENERATION_MODEL", raising=False)
+    monkeypatch.delenv("IMAGE_GENERATION_API_KEY", raising=False)
+    monkeypatch.delenv("IMAGE_GENERATION_BASE_URL", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setattr("app.services.image_generation_service.STATIC_DIR", tmp_path)
+
+    config = get_image_generation_config()
+
+    assert config.enabled is True
+    assert config.provider == "gemini"
+    assert config.model == "gemini-2.5-flash-image"
+    assert config.api_key == "gemini-key"
+    assert config.base_url == "https://generativelanguage.googleapis.com/v1beta"
+
+
+def test_generate_image_supports_gemini_provider(monkeypatch, tmp_path: Path):
+    payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": base64.b64encode(b"gemini-png-bytes").decode("utf-8"),
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    def _fake_urlopen(request, timeout=120):  # noqa: ARG001
+        assert "models/gemini-2.5-flash-image:generateContent" in request.full_url
+        assert "key=gemini-key" in request.full_url
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("app.services.image_generation_service.urllib_request.urlopen", _fake_urlopen)
+
+    service = ExperimentalImageGenerationService(
+        ImageGenerationConfig(
+            enabled=True,
+            provider="gemini",
+            model="gemini-2.5-flash-image",
+            api_key="gemini-key",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            output_dir=tmp_path,
+        )
+    )
+
+    result = service.generate_image(prompt="画一个牛顿第三定律示意图", style="diagram_clean", topic="牛顿第三定律")
+
+    assert result["image_url"].startswith("/static/")
+    assert result["model"] == "gemini-2.5-flash-image"
+    assert Path(result["image_path"]).exists()
+    assert Path(result["image_path"]).read_bytes() == b"gemini-png-bytes"

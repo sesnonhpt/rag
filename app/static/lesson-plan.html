@@ -912,6 +912,37 @@
             <textarea id="notes-input" placeholder="例如：希望更偏实验探究；增加生活案例；课堂互动多一点；减少公式推导。"></textarea>
           </div>
 
+          <div class="card" style="margin: 0 0 18px; padding: 14px 14px 16px;">
+            <h2 class="card-title" style="font-size: 16px; margin-bottom: 10px;">AI 生图</h2>
+            <p class="card-caption">如果这次教案要补充 AI 示意图，可以勾选后直接使用模板 prompt，再自己修改。</p>
+            <div class="form-group">
+              <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+                <input type="checkbox" id="ai-visual-enabled" />
+                <span>本次教案使用 AI 生图补充</span>
+              </label>
+            </div>
+            <div class="experiment-status" id="image-prompt-status">
+              <span class="experiment-status-dot"></span>
+              <span id="image-prompt-status-text">勾选后会自动填入一版可编辑的图片 prompt。</span>
+            </div>
+
+            <div class="form-group">
+              <label for="image-prompt-type">Prompt 类型</label>
+              <select id="image-prompt-type">
+                <option value="concept_diagram">概念示意图</option>
+                <option value="process_diagram">流程图</option>
+                <option value="structure_diagram">结构图</option>
+                <option value="comparison_infographic">对比信息图</option>
+                <option value="classroom_illustration">课堂插画</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="image-prompt-editor">生图 Prompt</label>
+              <textarea id="image-prompt-editor" placeholder="勾选后会自动填入一版模板 prompt，你可以继续修改。"></textarea>
+            </div>
+          </div>
+
           <div class="form-group">
             <label for="template-category">模板类别</label>
             <select id="template-category">
@@ -963,43 +994,11 @@
         </div>
 
         <div class="card">
-          <h2 class="card-title">LLM 生图实验</h2>
-          <p class="card-caption">先在页面侧验证独立生图闭环，不接入教案主流程。当前默认建议使用 gpt-image-1-mini；gpt-image-1.5 质量更高，但成本也更高，适合后续高质量场景再切换。</p>
-          <div class="experiment-status" id="image-experiment-status">
-            <span class="experiment-status-dot"></span>
-            <span id="image-experiment-status-text">正在检查服务配置...</span>
-          </div>
-
-          <div class="form-group">
-            <label for="image-prompt-input">生图提示词</label>
-            <textarea id="image-prompt-input" placeholder="例如：生成一张适合初中物理课堂的电磁感应概念示意图，包含线圈、磁场方向、感应电流关系，中文标签清晰。"></textarea>
-          </div>
-
-          <div class="form-group">
-            <label for="image-style-select">风格</label>
-            <select id="image-style-select">
-              <option value="diagram_clean">简洁示意图</option>
-              <option value="education_illustration">教学插画</option>
-              <option value="minimal_infographic">极简信息图</option>
-            </select>
-          </div>
-
-          <div class="button-group">
-            <button class="btn btn-primary" id="generate-image-btn" type="button">生成图片</button>
-          </div>
-
-          <div class="experiment-preview" id="image-preview-panel">
-            <div class="experiment-preview-empty" id="image-preview-empty">这里会显示独立试验模块生成的图片结果。</div>
-            <img id="image-preview" alt="LLM 生图结果" style="display:none;" />
-            <div class="experiment-meta" id="image-preview-meta" style="display:none;"></div>
-          </div>
-        </div>
-
-        <div class="card">
           <h2 class="card-title">最近生成</h2>
           <p class="card-caption">保留最近几次主题与模板选择，方便回看或继续生成。</p>
           <div class="history-list" id="history-list"></div>
         </div>
+
       </div>
 
       <div class="result-section" id="result-section" style="display: none;">
@@ -1043,14 +1042,11 @@
     const exportDocBtn = document.getElementById('export-doc-btn');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingText = document.querySelector('.loading-text');
-    const imagePromptInput = document.getElementById('image-prompt-input');
-    const imageStyleSelect = document.getElementById('image-style-select');
-    const generateImageBtn = document.getElementById('generate-image-btn');
-    const imagePreview = document.getElementById('image-preview');
-    const imagePreviewEmpty = document.getElementById('image-preview-empty');
-    const imagePreviewMeta = document.getElementById('image-preview-meta');
-    const imageExperimentStatus = document.getElementById('image-experiment-status');
-    const imageExperimentStatusText = document.getElementById('image-experiment-status-text');
+    const aiVisualEnabledInput = document.getElementById('ai-visual-enabled');
+    const imagePromptTypeSelect = document.getElementById('image-prompt-type');
+    const imagePromptEditor = document.getElementById('image-prompt-editor');
+    const imagePromptStatus = document.getElementById('image-prompt-status');
+    const imagePromptStatusText = document.getElementById('image-prompt-status-text');
     const imageOriginSummary = document.getElementById('image-origin-summary');
     const exportDocBtnDefaultText = exportDocBtn ? exportDocBtn.textContent : '导出 DOCX';
     const CONVERSATION_STATE_KEY = 'lesson_plan_conversation_state';
@@ -1059,8 +1055,6 @@
     // Frontend mock switch follows backend environment config from /client-config.
     // Local can disable mock while production keeps it enabled.
     let enableTopicTemplateMock = false;
-    let imageGenerationEnabled = false;
-
     const templateCategorySelect = document.getElementById('template-category');
     const templateDescription = document.getElementById('template-description');
     const planningIndicator = document.getElementById('planning-indicator');
@@ -1076,6 +1070,33 @@
       { topic: '牛顿第二定律', templateCategory: 'guide', notes: '增加生活案例' },
       { topic: '速度和速率有什么区别', templateCategory: 'comprehensive' },
     ];
+    const AI_PROMPT_TEMPLATES = {
+      concept_diagram: {
+        style: 'diagram_clean',
+        build: ({ topic, notes }) =>
+          `为“${topic}”生成一张高中物理中文教学概念示意图。必须围绕该主题的物理概念本身展开，突出核心概念之间的关系，使用清晰箭头、模块或标注，中文标签准确，适合直接插入教案或课件。不要出现动物、植物、风景、人物写真、纯装饰背景或与主题无关的物体。${notes ? `补充要求：${notes}` : ''}`.trim(),
+      },
+      process_diagram: {
+        style: 'diagram_clean',
+        build: ({ topic, notes }) =>
+          `为“${topic}”生成一张高中物理中文教学流程图。按步骤展示关键物理过程、变化顺序或推导逻辑，使用箭头和模块表达，层次分明，标签简洁。不要出现与主题无关的生物、自然风景、纯抽象纹理或装饰画面。${notes ? `补充要求：${notes}` : ''}`.trim(),
+      },
+      structure_diagram: {
+        style: 'diagram_clean',
+        build: ({ topic, notes }) =>
+          `为“${topic}”生成一张高中物理中文教学结构图。突出组成部分、层级关系和相互连接，版面清晰，适合学生快速理解整体结构。只呈现和主题相关的物理对象、图示元素与中文标签，不要加入无关素材。${notes ? `补充要求：${notes}` : ''}`.trim(),
+      },
+      comparison_infographic: {
+        style: 'minimal_infographic',
+        build: ({ topic, notes }) =>
+          `为“${topic}”生成一张高中物理中文教学对比信息图。突出关键差异、对应关系或易错辨析，信息排布整齐，重点醒目，适合课件展示。图中只保留与主题相关的物理概念和中文说明，不要加入装饰性主体或无关图像。${notes ? `补充要求：${notes}` : ''}`.trim(),
+      },
+      classroom_illustration: {
+        style: 'education_illustration',
+        build: ({ topic, notes }) =>
+          `为“${topic}”生成一张适合高中物理课堂导入的中文教学插画。画面友好、不过度写实，必须围绕该主题的物理场景或实验情境展开，并配有清晰中文标签。不要生成与主题无关的动物、植物、风景或随意插画元素。${notes ? `补充要求：${notes}` : ''}`.trim(),
+      },
+    };
     let conversationState = null;
     let historyRecords = [];
 
@@ -1170,22 +1191,9 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         enableTopicTemplateMock = !!data.lesson_plan_mock_enabled;
-        imageGenerationEnabled = !!data.image_generation_enabled;
-        updateImageExperimentStatus();
       } catch {
         enableTopicTemplateMock = false;
-        imageGenerationEnabled = false;
-        updateImageExperimentStatus();
       }
-    }
-
-    function updateImageExperimentStatus() {
-      if (!imageExperimentStatus || !imageExperimentStatusText) return;
-      imageExperimentStatus.classList.toggle('enabled', imageGenerationEnabled);
-      imageExperimentStatusText.textContent = imageGenerationEnabled
-        ? '已检测到图片生成配置，可直接试验'
-        : '未检测到图片生成配置，接口调用会失败';
-      generateImageBtn.disabled = false;
     }
 
     function updateTemplateDescription() {
@@ -1474,25 +1482,6 @@
       }
     }
 
-    function setImageExperimentLoading(loading) {
-      if (!generateImageBtn) return;
-      generateImageBtn.disabled = loading;
-      generateImageBtn.textContent = loading ? '生成中...' : '生成图片';
-    }
-
-    function renderImageExperimentResult(payload) {
-      if (!payload || !payload.image_url) return;
-      imagePreview.src = `${payload.image_url}?t=${Date.now()}`;
-      imagePreview.style.display = 'block';
-      imagePreviewEmpty.style.display = 'none';
-      imagePreviewMeta.style.display = 'block';
-      imagePreviewMeta.innerHTML = `
-        <div>模型：${payload.model || 'unknown'}</div>
-        <div>风格：${payload.style || ''}</div>
-        <div><a href="${payload.image_url}" target="_blank" rel="noopener noreferrer">打开原图</a></div>
-      `;
-    }
-
     function showError(message) {
       const errorDiv = document.createElement('div');
       errorDiv.className = 'error-message';
@@ -1504,6 +1493,51 @@
       setTimeout(() => {
         errorDiv.remove();
       }, 5000);
+    }
+
+    function updateImagePromptStatus(message, generated = false) {
+      if (!imagePromptStatus || !imagePromptStatusText) return;
+      imagePromptStatus.classList.toggle('enabled', generated);
+      imagePromptStatusText.textContent = message;
+    }
+
+    function buildAiPromptTemplate() {
+      const key = imagePromptTypeSelect?.value || 'concept_diagram';
+      const template = AI_PROMPT_TEMPLATES[key] || AI_PROMPT_TEMPLATES.concept_diagram;
+      const topic = topicInput.value.trim() || '当前教学主题';
+      const notes = notesInput.value.trim();
+      let prompt = template.build({ topic, notes });
+      if (/(速度|速率|位移|时间|加速度)/.test(topic)) {
+        prompt += ' 优先使用速度-时间、位移-时间、运动轨迹、刻度尺、计时器、小车等与运动学相关的物理图示元素，不要生成生活无关插画。';
+      }
+      return {
+        prompt,
+        style: template.style,
+      };
+    }
+
+    function applyAiPromptTemplate({ force = false } = {}) {
+      const enabled = !!aiVisualEnabledInput?.checked;
+      if (!enabled) return;
+      if (!force && imagePromptEditor.dataset.customized === 'true') return;
+      const next = buildAiPromptTemplate();
+      imagePromptEditor.value = next.prompt;
+      imagePromptEditor.dataset.style = next.style;
+      imagePromptEditor.dataset.customized = 'false';
+      updateImagePromptStatus('已填入一版模板 prompt，你可以继续修改。', true);
+    }
+
+    function syncAiPromptControls() {
+      const enabled = !!aiVisualEnabledInput?.checked;
+      imagePromptEditor.disabled = !enabled;
+      imagePromptTypeSelect.disabled = !enabled;
+      if (!enabled) {
+        updateImagePromptStatus('当前未启用 AI 生图补充。');
+      } else if (!String(imagePromptEditor.value || '').trim()) {
+        applyAiPromptTemplate({ force: true });
+      } else if (imagePromptEditor.dataset.customized !== 'true') {
+        applyAiPromptTemplate({ force: true });
+      }
     }
 
     function formatApiError(payload, fallbackText) {
@@ -1630,6 +1664,7 @@
       templateCategorySelect.value = record.templateCategory || getDefaultTemplateCategory();
       conversationState = record.conversationState || null;
       updateTemplateDescription();
+      syncAiPromptControls();
       topicInput.focus();
     }
 
@@ -1647,6 +1682,7 @@
       templateCategorySelect.value = record.templateCategory || getDefaultTemplateCategory();
       conversationState = record.conversationState || null;
       updateTemplateDescription();
+      syncAiPromptControls();
 
       renderResult({
         topic: record.topic || '',
@@ -1823,51 +1859,6 @@
       return response.json();
     }
 
-    async function generateExperimentImage() {
-      const topic = topicInput.value.trim();
-      const prompt = imagePromptInput.value.trim() || (
-        topic
-          ? `生成一张适合课堂使用的“${topic}”教学示意图，中文标签清晰，结构关系明确。`
-          : ''
-      );
-
-      if (!prompt) {
-        showError('请先输入生图提示词，或先填写上方主题后再试。');
-        return;
-      }
-
-      setImageExperimentLoading(true);
-      try {
-        const response = await fetch('/experimental/image-generation', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            prompt,
-            topic: topic || null,
-            style: imageStyleSelect.value,
-          }),
-        });
-
-        if (!response.ok) {
-          let errorText = `图片生成失败 (${response.status})`;
-          try {
-            const data = await response.json();
-            errorText = formatApiError(data, errorText);
-          } catch {}
-          throw new Error(errorText);
-        }
-
-        const payload = await response.json();
-        renderImageExperimentResult(payload);
-      } catch (error) {
-        showError(`生图试验失败：${error.message}`);
-      } finally {
-        setImageExperimentLoading(false);
-      }
-    }
-
     async function generateLessonPlan() {
       const topic = topicInput.value.trim();
       if (!topic) {
@@ -1887,6 +1878,9 @@
           model: modelSelect.value || null,
           template_category: templateCategory,
           conversation_state: conversationState,
+          ai_visual_enabled: !!aiVisualEnabledInput.checked,
+          ai_visual_prompt: aiVisualEnabledInput.checked ? (imagePromptEditor.value.trim() || null) : null,
+          ai_visual_style: aiVisualEnabledInput.checked ? (imagePromptEditor.dataset.style || 'diagram_clean') : null,
         };
 
         let data;
@@ -1920,10 +1914,16 @@
     function resetForm() {
       topicInput.value = '';
       notesInput.value = '';
+      aiVisualEnabledInput.checked = false;
+      imagePromptEditor.value = '';
+      imagePromptEditor.dataset.style = 'diagram_clean';
+      imagePromptEditor.dataset.customized = 'false';
+      imagePromptTypeSelect.value = 'concept_diagram';
       resultSection.style.display = 'none';
       conversationState = null;
       localStorage.removeItem(CONVERSATION_STATE_KEY);
       planningIndicator.textContent = '';
+      syncAiPromptControls();
       exportDocBtn.disabled = true;
     }
 
@@ -1959,8 +1959,13 @@
     generateBtn.addEventListener('click', generateLessonPlan);
     resetBtn.addEventListener('click', resetForm);
     exportDocBtn.addEventListener('click', exportCurrentLessonAsDocx);
-    generateImageBtn.addEventListener('click', generateExperimentImage);
-
+    aiVisualEnabledInput.addEventListener('change', syncAiPromptControls);
+    imagePromptTypeSelect.addEventListener('change', () => applyAiPromptTemplate({ force: true }));
+    imagePromptEditor.addEventListener('input', () => {
+      imagePromptEditor.dataset.customized = 'true';
+    });
+    topicInput.addEventListener('input', () => applyAiPromptTemplate());
+    notesInput.addEventListener('input', () => applyAiPromptTemplate());
     // 按Enter键生成内容
     topicInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -1972,6 +1977,9 @@
     loadTemplateCatalog();
     renderHistory();
     loadBackendHistory();
+    imagePromptEditor.dataset.style = 'diagram_clean';
+    imagePromptEditor.dataset.customized = 'false';
+    syncAiPromptControls();
   </script>
 </body>
 </html>

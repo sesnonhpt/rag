@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib import parse as urllib_parse
 import uuid
 
 from app.core.paths import STATIC_DIR
@@ -35,6 +36,7 @@ class ImageGenerationError(RuntimeError):
 @dataclass(frozen=True)
 class ImageGenerationConfig:
     enabled: bool
+    provider: str
     model: Optional[str]
     api_key: Optional[str]
     base_url: Optional[str]
@@ -69,32 +71,60 @@ def get_image_generation_config() -> ImageGenerationConfig:
     else:
         enabled = raw_enabled.strip().lower() not in {"0", "false", "off", "no"}
 
-    model = (
-        os.environ.get("IMAGE_GENERATION_MODEL")
-        or os.environ.get("OPENAI_IMAGE_MODEL")
-        # Default to mini for the experiment module: quality is sufficient
-        # for current teaching diagrams while latency/cost are noticeably lower.
-        # Keep gpt-image-1.5 as the high-quality fallback when we explicitly
-        # want better visual fidelity and can accept higher cost.
-        or project_defaults.get("model")
-        or "gpt-image-1-mini"
-    )
-    api_key = (
-        os.environ.get("IMAGE_GENERATION_API_KEY")
-        or os.environ.get("OPENAI_IMAGE_API_KEY")
-        or os.environ.get("LLM_API_KEY")
-        or project_defaults.get("api_key")
-    )
-    base_url = (
-        os.environ.get("IMAGE_GENERATION_BASE_URL")
-        or os.environ.get("OPENAI_IMAGE_BASE_URL")
-        or os.environ.get("LLM_BASE_URL")
-        or project_defaults.get("base_url")
-        or "https://api.openai.com/v1"
-    )
+    provider = str(
+        os.environ.get("IMAGE_GENERATION_PROVIDER")
+        or os.environ.get("IMAGE_PROVIDER")
+        or "openai_compatible"
+    ).strip().lower()
+
+    if provider == "gemini":
+        model = (
+            os.environ.get("IMAGE_GENERATION_MODEL")
+            or os.environ.get("GEMINI_IMAGE_MODEL")
+            or "gemini-2.5-flash-image"
+        )
+        api_key = (
+            os.environ.get("IMAGE_GENERATION_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+            or project_defaults.get("api_key")
+        )
+        base_url = (
+            os.environ.get("IMAGE_GENERATION_BASE_URL")
+            or os.environ.get("GEMINI_IMAGE_BASE_URL")
+            or os.environ.get("GEMINI_BASE_URL")
+            or "https://generativelanguage.googleapis.com/v1beta"
+        )
+    else:
+        provider = "openai_compatible"
+        model = (
+            os.environ.get("IMAGE_GENERATION_MODEL")
+            or os.environ.get("OPENAI_IMAGE_MODEL")
+            # Default to mini for the experiment module: quality is sufficient
+            # for current teaching diagrams while latency/cost are noticeably lower.
+            # Keep gpt-image-1.5 as the high-quality fallback when we explicitly
+            # want better visual fidelity and can accept higher cost.
+            or project_defaults.get("model")
+            or "gpt-image-1-mini"
+        )
+        api_key = (
+            os.environ.get("IMAGE_GENERATION_API_KEY")
+            or os.environ.get("OPENAI_IMAGE_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+            or project_defaults.get("api_key")
+        )
+        base_url = (
+            os.environ.get("IMAGE_GENERATION_BASE_URL")
+            or os.environ.get("OPENAI_IMAGE_BASE_URL")
+            or os.environ.get("LLM_BASE_URL")
+            or project_defaults.get("base_url")
+            or "https://api.openai.com/v1"
+        )
+
     output_dir = STATIC_DIR / "generated-images"
     return ImageGenerationConfig(
         enabled=enabled and bool(model and api_key and base_url),
+        provider=provider,
         model=model,
         api_key=api_key,
         base_url=base_url,
@@ -102,74 +132,15 @@ def get_image_generation_config() -> ImageGenerationConfig:
     )
 
 
-class ExperimentalImageGenerationService:
-    """Minimal OpenAI-compatible image generation integration."""
+class _BaseImageProvider:
+    def __init__(self, config: ImageGenerationConfig) -> None:
+        self.config = config
 
-    def __init__(self, config: Optional[ImageGenerationConfig] = None) -> None:
-        self.config = config or get_image_generation_config()
+    def generate_image_bytes(self, *, prompt: str) -> bytes:
+        raise NotImplementedError
 
-    def generate_image(
-        self,
-        *,
-        prompt: str,
-        style: str,
-        topic: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not self.config.enabled:
-            raise ImageGenerationError(
-                "图片生成功能未配置。请设置 IMAGE_GENERATION_API_KEY / IMAGE_GENERATION_BASE_URL / IMAGE_GENERATION_MODEL。"
-            )
 
-        clean_prompt = " ".join(str(prompt or "").split())
-        if not clean_prompt:
-            raise ImageGenerationError("提示词不能为空")
-
-        final_prompt = self._build_prompt(prompt=clean_prompt, style=style, topic=topic)
-        payload = {
-            "model": self.config.model,
-            "prompt": final_prompt,
-            "size": "1024x1024",
-            "response_format": "b64_json",
-        }
-
-        try:
-            response_payload = self._request_image_payload(payload)
-        except urllib_error.HTTPError as exc:
-            detail = self._extract_error_body(exc)
-            raise ImageGenerationError(detail or f"图片生成请求失败（HTTP {exc.code}）") from exc
-        except urllib_error.URLError as exc:
-            raise ImageGenerationError(f"图片生成网络异常：{exc.reason}") from exc
-        except http.client.RemoteDisconnected as exc:
-            raise ImageGenerationError("图片网关已连接但未返回有效响应，可能是不支持当前图片模型或图片生成接口。") from exc
-
-        image_bytes = self._extract_image_bytes(response_payload)
-        saved = self._save_image(image_bytes)
-        logger.info(
-            "experimental_image.generated model=%s topic=%s style=%s file=%s",
-            self.config.model,
-            topic or "",
-            style,
-            saved["filename"],
-        )
-        return {
-            "image_url": saved["url"],
-            "image_path": str(saved["path"]),
-            "filename": saved["filename"],
-            "model": self.config.model,
-            "style": style,
-            "prompt": clean_prompt,
-            "topic": topic or "",
-        }
-
-    def _build_prompt(self, *, prompt: str, style: str, topic: Optional[str]) -> str:
-        style_suffix = _STYLE_SUFFIXES.get(style, _STYLE_SUFFIXES["diagram_clean"])
-        topic_text = f"主题：{topic}。" if topic else ""
-        guardrail = (
-            "用于教学场景。避免水印、品牌标识、敏感人物肖像和过度写实照片感。"
-            "优先表达概念关系、流程、结构和课堂可解释性。"
-        )
-        return f"{topic_text}{prompt} {style_suffix} {guardrail}".strip()
-
+class _OpenAICompatibleImageProvider(_BaseImageProvider):
     def _images_endpoint(self) -> str:
         base_url = str(self.config.base_url or "").rstrip("/")
         if base_url.endswith("/images/generations"):
@@ -196,7 +167,7 @@ class ExperimentalImageGenerationService:
         try:
             return self._post_json(endpoint, payload, api_key=api_key)
         except urllib_error.HTTPError as exc:
-            detail = self._extract_error_body(exc)
+            detail = ExperimentalImageGenerationService._extract_error_body(exc)
             if "Unknown parameter: 'response_format'" not in detail:
                 raise
 
@@ -204,7 +175,121 @@ class ExperimentalImageGenerationService:
             fallback_payload.pop("response_format", None)
             return self._post_json(endpoint, fallback_payload, api_key=api_key)
 
-    def _extract_error_body(self, exc: urllib_error.HTTPError) -> str:
+    def generate_image_bytes(self, *, prompt: str) -> bytes:
+        payload = {
+            "model": self.config.model,
+            "prompt": prompt,
+            "size": "1024x1024",
+            "response_format": "b64_json",
+        }
+        response_payload = self._request_image_payload(payload)
+        return ExperimentalImageGenerationService._extract_openai_image_bytes(response_payload)
+
+
+class _GeminiImageProvider(_BaseImageProvider):
+    def _generate_endpoint(self) -> str:
+        base_url = str(self.config.base_url or "").rstrip("/")
+        model = urllib_parse.quote(str(self.config.model or ""), safe="")
+        api_key = urllib_parse.quote(str(self.config.api_key or ""), safe="")
+        return f"{base_url}/models/{model}:generateContent?key={api_key}"
+
+    def generate_image_bytes(self, *, prompt: str) -> bytes:
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt,
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+            },
+        }
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib_request.Request(
+            self._generate_endpoint(),
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib_request.urlopen(request, timeout=120) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        return ExperimentalImageGenerationService._extract_gemini_image_bytes(response_payload)
+
+
+class ExperimentalImageGenerationService:
+    """Configurable image generation service for lesson-plan visuals."""
+
+    def __init__(self, config: Optional[ImageGenerationConfig] = None) -> None:
+        self.config = config or get_image_generation_config()
+        self.provider = self._build_provider(self.config)
+
+    def generate_image(
+        self,
+        *,
+        prompt: str,
+        style: str,
+        topic: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not self.config.enabled:
+            raise ImageGenerationError(
+                "图片生成功能未配置。请设置 IMAGE_GENERATION_API_KEY / IMAGE_GENERATION_BASE_URL / IMAGE_GENERATION_MODEL。"
+            )
+
+        clean_prompt = " ".join(str(prompt or "").split())
+        if not clean_prompt:
+            raise ImageGenerationError("提示词不能为空")
+
+        final_prompt = self._build_prompt(prompt=clean_prompt, style=style, topic=topic)
+
+        try:
+            image_bytes = self.provider.generate_image_bytes(prompt=final_prompt)
+        except urllib_error.HTTPError as exc:
+            detail = self._extract_error_body(exc)
+            raise ImageGenerationError(detail or f"图片生成请求失败（HTTP {exc.code}）") from exc
+        except urllib_error.URLError as exc:
+            raise ImageGenerationError(f"图片生成网络异常：{exc.reason}") from exc
+        except http.client.RemoteDisconnected as exc:
+            raise ImageGenerationError("图片网关已连接但未返回有效响应，可能是不支持当前图片模型或图片生成接口。") from exc
+
+        saved = self._save_image(image_bytes)
+        logger.info(
+            "experimental_image.generated provider=%s model=%s topic=%s style=%s file=%s",
+            self.config.provider,
+            self.config.model,
+            topic or "",
+            style,
+            saved["filename"],
+        )
+        return {
+            "image_url": saved["url"],
+            "image_path": str(saved["path"]),
+            "filename": saved["filename"],
+            "model": self.config.model,
+            "style": style,
+            "prompt": clean_prompt,
+            "topic": topic or "",
+        }
+
+    def _build_provider(self, config: ImageGenerationConfig) -> _BaseImageProvider:
+        if config.provider == "gemini":
+            return _GeminiImageProvider(config)
+        return _OpenAICompatibleImageProvider(config)
+
+    def _build_prompt(self, *, prompt: str, style: str, topic: Optional[str]) -> str:
+        style_suffix = _STYLE_SUFFIXES.get(style, _STYLE_SUFFIXES["diagram_clean"])
+        topic_text = f"主题：{topic}。" if topic else ""
+        guardrail = (
+            "用于教学场景。避免水印、品牌标识、敏感人物肖像和过度写实照片感。"
+            "优先表达概念关系、流程、结构和课堂可解释性。"
+        )
+        return f"{topic_text}{prompt} {style_suffix} {guardrail}".strip()
+
+    @staticmethod
+    def _extract_error_body(exc: urllib_error.HTTPError) -> str:
         try:
             raw = exc.read().decode("utf-8")
             payload = json.loads(raw)
@@ -217,7 +302,8 @@ class ExperimentalImageGenerationService:
         except Exception:
             return ""
 
-    def _extract_image_bytes(self, payload: Dict[str, Any]) -> bytes:
+    @staticmethod
+    def _extract_openai_image_bytes(payload: Dict[str, Any]) -> bytes:
         data = payload.get("data")
         if not isinstance(data, list) or not data:
             raise ImageGenerationError("图片生成返回为空")
@@ -242,6 +328,37 @@ class ExperimentalImageGenerationService:
                 raise ImageGenerationError("远程图片下载失败") from exc
 
         raise ImageGenerationError("图片生成响应中未包含可用图片数据")
+
+    @staticmethod
+    def _extract_gemini_image_bytes(payload: Dict[str, Any]) -> bytes:
+        candidates = payload.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            raise ImageGenerationError("Gemini 图片生成返回为空")
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            content = candidate.get("content")
+            if not isinstance(content, dict):
+                continue
+            parts = content.get("parts")
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                inline_data = part.get("inlineData") or part.get("inline_data")
+                if not isinstance(inline_data, dict):
+                    continue
+                mime_type = str(inline_data.get("mimeType") or inline_data.get("mime_type") or "")
+                b64_value = inline_data.get("data")
+                if mime_type.startswith("image/") and isinstance(b64_value, str) and b64_value.strip():
+                    try:
+                        return base64.b64decode(b64_value)
+                    except Exception as exc:
+                        raise ImageGenerationError("Gemini 图片内容解码失败") from exc
+
+        raise ImageGenerationError("Gemini 响应中未包含可用图片数据")
 
     def _save_image(self, image_bytes: bytes) -> Dict[str, Any]:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")

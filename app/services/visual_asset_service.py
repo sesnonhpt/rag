@@ -13,6 +13,7 @@ from src.observability.logger import get_logger
 logger = get_logger(__name__)
 
 _SUPPORTED_TEMPLATE_CATEGORIES = {"comprehensive", "teaching_design"}
+_SUPPORTED_IMAGE_STYLES = {"diagram_clean", "education_illustration", "minimal_infographic"}
 _AUTO_VISUAL_POSITIVE_KEYWORDS = (
     "多图片",
     "更多图片",
@@ -116,8 +117,15 @@ def should_generate_visual_asset(
     template_category: Optional[str],
     existing_images: List[LessonImageResource],
     llm: Any | None = None,
+    enabled: Optional[bool] = None,
 ) -> bool:
     _ = existing_images
+    if enabled is False:
+        return False
+    if enabled is True:
+        if not str(topic or "").strip():
+            return False
+        return str(template_category or "").strip() in _SUPPORTED_TEMPLATE_CATEGORIES
     if not detect_visual_generation_intent(notes, llm=llm):
         return False
     if not str(topic or "").strip():
@@ -150,6 +158,66 @@ def build_visual_generation_prompt(
     return prompt, style
 
 
+def suggest_visual_generation_prompt(
+    *,
+    topic: str,
+    notes: Optional[str],
+    template_category: Optional[str],
+    llm: Any | None = None,
+) -> tuple[str, str, str]:
+    fallback_prompt, fallback_style = build_visual_generation_prompt(
+        topic=topic,
+        notes=notes,
+        template_category=template_category,
+    )
+
+    if llm is None:
+        return fallback_prompt, fallback_style, "fallback"
+
+    topic_text = " ".join(str(topic or "").split())
+    notes_text = " ".join(str(notes or "").split())
+    template_text = str(template_category or "comprehensive").strip()
+    messages = [
+        Message(
+            role="system",
+            content=(
+                "你是教学图片提示词助手。"
+                "请根据教案主题和备注，生成一条适合中文 AI 生图模型使用的提示词。"
+                "目标是生成教学示意图、结构图、流程图或课堂插图。"
+                "只输出 JSON，不要解释。"
+                '格式必须为 {"prompt": "...", "style": "diagram_clean|education_illustration|minimal_infographic"}。'
+                "prompt 必须具体、可执行、中文表达自然，强调画面主体、构图、中文标签和教学用途。"
+            ),
+        ),
+        Message(
+            role="user",
+            content=(
+                f"主题：{topic_text}\n"
+                f"模板：{template_text}\n"
+                f"备注：{notes_text or '无'}"
+            ),
+        ),
+    ]
+    try:
+        response = llm.chat(messages).content.strip()
+        payload = json.loads(response)
+        prompt = " ".join(str(payload.get("prompt") or "").split())
+        style = str(payload.get("style") or "").strip() or fallback_style
+        if not prompt:
+            raise ValueError("empty prompt")
+        if style not in _STYLE_SUFFIXES:
+            style = fallback_style
+        return prompt, style, "llm"
+    except Exception as exc:
+        logger.warning(
+            "lesson_visual.prompt_suggest_failed topic=%s template_category=%s error=%s",
+            topic_text,
+            template_text,
+            exc,
+        )
+        return fallback_prompt, fallback_style, "fallback"
+
+
 def maybe_generate_visual_asset(
     *,
     topic: str,
@@ -157,6 +225,9 @@ def maybe_generate_visual_asset(
     template_category: Optional[str],
     existing_images: List[LessonImageResource],
     llm: Any | None = None,
+    enabled: Optional[bool] = None,
+    prompt_override: Optional[str] = None,
+    style_override: Optional[str] = None,
 ) -> Optional[LessonImageResource]:
     if not should_generate_visual_asset(
         topic=topic,
@@ -164,6 +235,7 @@ def maybe_generate_visual_asset(
         template_category=template_category,
         existing_images=existing_images,
         llm=llm,
+        enabled=enabled,
     ):
         return None
 
@@ -172,6 +244,12 @@ def maybe_generate_visual_asset(
         notes=notes,
         template_category=template_category,
     )
+    normalized_prompt_override = " ".join(str(prompt_override or "").split())
+    if normalized_prompt_override:
+        prompt = normalized_prompt_override
+    normalized_style_override = str(style_override or "").strip()
+    if normalized_style_override in _SUPPORTED_IMAGE_STYLES:
+        style = normalized_style_override
     service = ExperimentalImageGenerationService()
     try:
         result = service.generate_image(

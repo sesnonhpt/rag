@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict, is_dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
@@ -15,6 +17,47 @@ from src.observability.logger import get_logger
 logger = get_logger(__name__)
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+@lru_cache(maxsize=1)
+def _load_image_filter_report_index() -> Dict[str, Dict[str, Any]]:
+    processed_root = _ROOT / "data" / "processed"
+    if not processed_root.exists():
+        return {}
+
+    index: Dict[str, Dict[str, Any]] = {}
+    for report_path in processed_root.glob("*.image-filter-report.json"):
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            payload = payload.get("images", [])
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            image_id = str(item.get("image_id") or "").strip()
+            if not image_id:
+                continue
+            index[image_id] = item
+    return index
+
+
+def _should_reject_by_image_filter_report(image_id: Any) -> bool:
+    normalized_id = str(image_id or "").strip()
+    if not normalized_id:
+        return False
+
+    report = _load_image_filter_report_index().get(normalized_id)
+    if not report:
+        return False
+    if report.get("hard_reject") is True:
+        return True
+    if report.get("keep") is False:
+        return True
+    return False
 
 
 def sanitize_source_path(source_path: Any) -> str:
@@ -209,6 +252,29 @@ def _estimate_image_sharpness(path_obj: Path) -> float:
         return 0.0
 
 
+def _estimate_image_variation(path_obj: Path) -> float:
+    try:
+        from PIL import Image, ImageFile
+    except ImportError:
+        return 0.0
+
+    try:
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        with Image.open(path_obj) as image:
+            grayscale = image.convert("L")
+            grayscale.thumbnail((64, 64))
+            pixels = list(grayscale.getdata())
+            if not pixels:
+                return 0.0
+            return float(max(pixels) - min(pixels))
+    except Exception:
+        return 0.0
+
+
+def _is_supported_lesson_image_file(path_obj: Path) -> bool:
+    return path_obj.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+
+
 def _is_low_quality_lesson_image_file(path_obj: Path) -> bool:
     try:
         from PIL import Image, ImageFile
@@ -225,12 +291,15 @@ def _is_low_quality_lesson_image_file(path_obj: Path) -> bool:
     area = width * height
     short_side = min(width, height)
     sharpness = _estimate_image_sharpness(path_obj)
+    variation = _estimate_image_variation(path_obj)
 
     if area < 25000 or short_side < 110:
         return True
     if area < 70000 and sharpness < 8:
         return True
     if area < 120000 and short_side < 180 and sharpness < 10:
+        return True
+    if variation < 18:
         return True
     return False
 
@@ -350,6 +419,36 @@ def _score_lesson_image(
     return score
 
 
+def _result_has_visual_reference(result: Any) -> bool:
+    metadata = result.metadata or {}
+    text = " ".join(
+        str(part or "")
+        for part in [result.text, metadata.get("ocr_text"), metadata.get("caption_text")]
+    ).lower()
+    visual_patterns = [
+        r"\[image:",
+        r"如图",
+        r"见图",
+        r"下图",
+        r"上图",
+        r"图示",
+        r"图像",
+        r"图线",
+        r"图表",
+        r"示意图",
+        r"插图",
+        r"配图",
+        r"figure\s*\d*",
+        r"fig\.\s*\d*",
+        r"diagram",
+        r"chart",
+        r"graph",
+        r"plot",
+        r"illustration",
+    ]
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in visual_patterns)
+
+
 def extract_image_resources(
     results: List[Any],
     image_storage: Optional[ImageStorage] = None,
@@ -397,6 +496,14 @@ def extract_image_resources(
             caption = _normalize_image_caption(caption_lookup.get(str(image_id)))
             if not image_id or not image_path or image_id in seen_ids:
                 continue
+            if _should_reject_by_image_filter_report(image_id):
+                logger.info(
+                    "lesson_image.direct_report_rejected image_id=%s source=%s page=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                )
+                continue
             if not _is_effective_lesson_image(caption, source_path, page_num, image_info=image_info):
                 continue
             path_obj = resolve_image_file_path(image_path)
@@ -407,6 +514,23 @@ def extract_image_resources(
             if not path_obj.exists():
                 logger.info(
                     "lesson_image.direct_missing image_id=%s source=%s page=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                )
+                continue
+            if not _is_supported_lesson_image_file(path_obj):
+                logger.info(
+                    "lesson_image.direct_unsupported image_id=%s source=%s page=%s path=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                    path_obj,
+                )
+                continue
+            if not caption and not placeholder_image_ids and not _result_has_visual_reference(result):
+                logger.info(
+                    "lesson_image.direct_no_visual_reference image_id=%s source=%s page=%s",
                     image_id,
                     sanitize_source_path(source_path),
                     page_num,
@@ -455,6 +579,14 @@ def extract_image_resources(
                 continue
 
             direct_candidate_count += 1
+            if _should_reject_by_image_filter_report(image_id):
+                logger.info(
+                    "lesson_image.placeholder_report_rejected image_id=%s source=%s page=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                )
+                continue
             indexed_path = image_storage.get_image_path(str(image_id))
             if not indexed_path:
                 logger.info(
@@ -474,6 +606,15 @@ def extract_image_resources(
                     image_id,
                     sanitize_source_path(source_path),
                     page_num,
+                )
+                continue
+            if not _is_supported_lesson_image_file(path_obj):
+                logger.info(
+                    "lesson_image.placeholder_unsupported image_id=%s source=%s page=%s path=%s",
+                    image_id,
+                    sanitize_source_path(source_path),
+                    page_num,
+                    path_obj,
                 )
                 continue
             if _is_low_quality_lesson_image_file(path_obj):
@@ -552,11 +693,38 @@ def extract_image_resources(
             page_num = indexed.get("page_num")
             if not image_id or not file_path or image_id in seen_ids:
                 continue
+            if _should_reject_by_image_filter_report(image_id):
+                logger.info(
+                    "lesson_image.indexed_report_rejected image_id=%s page=%s path=%s",
+                    image_id,
+                    page_num,
+                    file_path,
+                )
+                continue
             if not _is_effective_lesson_image(None, file_path, page_num):
                 continue
             path_obj = resolve_image_file_path(file_path)
             if not path_obj.exists():
                 continue
+            if not _is_supported_lesson_image_file(path_obj):
+                logger.info(
+                    "lesson_image.indexed_unsupported image_id=%s page=%s path=%s",
+                    image_id,
+                    page_num,
+                    path_obj,
+                )
+                continue
+            doc_pages = preferred_pages.get(str(doc_hash), [])
+            if isinstance(page_num, int) and doc_pages:
+                page_distance = min(abs(page_num - candidate_page) for candidate_page in doc_pages)
+                if page_distance > 2:
+                    logger.info(
+                        "lesson_image.indexed_far_page image_id=%s page=%s preferred_pages=%s",
+                        image_id,
+                        page_num,
+                        doc_pages,
+                    )
+                    continue
             if _is_low_quality_lesson_image_file(path_obj):
                 logger.info(
                     "lesson_image.indexed_low_quality image_id=%s page=%s path=%s",
@@ -579,7 +747,6 @@ def extract_image_resources(
             if fingerprint:
                 seen_fingerprints.add(fingerprint)
             page_bonus = 0
-            doc_pages = preferred_pages.get(str(doc_hash), [])
             if isinstance(page_num, int) and doc_pages:
                 page_distance = min(abs(page_num - candidate_page) for candidate_page in doc_pages)
                 if page_distance == 0:
@@ -751,7 +918,7 @@ def to_review_report_response(report: Any) -> Optional[LessonReviewReportRespons
 
 
 def _format_image_markdown_block(image: LessonImageResource, index: int) -> str:
-    label = image.caption.strip() if image.caption else ("AI 示意图" if image.source_type == "generated" else "教材配图")
+    label = "教材配图" if image.source_type == "generated" else (image.caption.strip() if image.caption else "教材配图")
     title_line = f"**配图{index}：{label}**"
     image_line = f"![配图{index}]({image.url})"
     caption_parts: List[str] = []
