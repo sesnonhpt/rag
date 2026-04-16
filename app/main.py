@@ -12,6 +12,7 @@ from app.routers.assets import router as assets_router
 from app.routers.chat import router as chat_router
 from app.routers.experiments import router as experiments_router
 from app.routers.lesson import router as lesson_router
+from app.routers.ppt import router as ppt_router
 from app.routers.traces import router as traces_router
 
 
@@ -33,4 +34,5 @@ app.include_router(assets_router)
 app.include_router(chat_router)
 app.include_router(experiments_router)
 app.include_router(lesson_router)
+app.include_router(ppt_router)
 app.include_router(traces_router)

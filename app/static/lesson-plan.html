@@ -1007,6 +1007,7 @@
           <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px;">
             <h3 class="result-card-title" style="margin-bottom: 0;">生成内容</h3>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="btn btn-secondary" id="open-ppt-editor-btn" type="button" disabled>进入 PPT 预览</button>
               <button class="btn btn-secondary" id="export-ppt-btn" type="button" disabled>导出 PPTX</button>
               <button class="btn btn-primary" id="export-doc-btn" type="button" disabled>导出 DOCX</button>
             </div>
@@ -1045,6 +1046,7 @@
     const resourcesContent = document.getElementById('resources-content');
     const exportDocBtn = document.getElementById('export-doc-btn');
     const exportPptBtn = document.getElementById('export-ppt-btn');
+    const openPptEditorBtn = document.getElementById('open-ppt-editor-btn');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingText = document.querySelector('.loading-text');
     const aiVisualEnabledInput = document.getElementById('ai-visual-enabled');
@@ -1222,6 +1224,7 @@
       generateBtn.disabled = show;
       exportDocBtn.disabled = show || !lessonContent.textContent.trim();
       exportPptBtn.disabled = show || !lessonContent.textContent.trim();
+      openPptEditorBtn.disabled = show || !lessonContent.textContent.trim();
       if (!show && loadingText) {
         loadingText.textContent = '正在生成中';
       }
@@ -1231,6 +1234,7 @@
       generateBtn.disabled = show;
       exportDocBtn.disabled = show || !lessonContent.textContent.trim();
       exportPptBtn.disabled = show || !lessonContent.textContent.trim();
+      openPptEditorBtn.disabled = show || !lessonContent.textContent.trim();
       exportDocBtn.textContent = show ? '导出中...' : exportDocBtnDefaultText;
     }
 
@@ -1238,6 +1242,7 @@
       generateBtn.disabled = show;
       exportDocBtn.disabled = show || !lessonContent.textContent.trim();
       exportPptBtn.disabled = show || !lessonContent.textContent.trim();
+      openPptEditorBtn.disabled = show || !lessonContent.textContent.trim();
       exportPptBtn.textContent = show ? '导出中...' : exportPptBtnDefaultText;
     }
 
@@ -1547,6 +1552,59 @@
       }
     }
 
+    async function openCurrentLessonInPptEditor() {
+      const contentText = lessonContent.textContent.trim();
+      if (!contentText) {
+        showError('当前没有可编辑的课件内容');
+        return;
+      }
+
+      const exportTitle = sanitizeFilename(topicInput.value || '教案课件');
+      try {
+        const buildResponse = await fetch('/lesson-plan/build-ppt-deck', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            title: exportTitle,
+            topic: topicInput.value.trim() || null,
+            content_html: lessonContent.innerHTML,
+            lesson_content: lessonContent.innerText,
+            image_resources: latestImageResources,
+            template_category: 'ppt',
+          }),
+        });
+        if (!buildResponse.ok) {
+          throw new Error(`构建 deck 失败 (${buildResponse.status})`);
+        }
+        const built = await buildResponse.json();
+        const deck = built.deck;
+
+        const createResponse = await fetch('/ppt-decks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            title: deck.title,
+            topic: deck.topic,
+            template_category: deck.template_category,
+            slides: deck.slides,
+            theme: deck.theme,
+            source_snapshot: deck.source_snapshot,
+          }),
+        });
+        if (!createResponse.ok) {
+          throw new Error(`保存 deck 失败 (${createResponse.status})`);
+        }
+        const created = await createResponse.json();
+        window.location.href = `/ppt-editor.html?deck_id=${encodeURIComponent(created.deck.deck_id)}`;
+      } catch (error) {
+        showError(`进入 PPT 编辑失败：${error.message}`);
+      }
+    }
+
     function setLoadingText(text) {
       if (loadingText) {
         loadingText.textContent = text;
@@ -1785,12 +1843,14 @@
         renderImageOriginSummary(latestImageResources);
         exportDocBtn.disabled = false;
         exportPptBtn.disabled = false;
+        openPptEditorBtn.disabled = false;
       } else {
         lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无生成内容</p>';
         latestImageResources = [];
         renderImageOriginSummary([]);
         exportDocBtn.disabled = true;
         exportPptBtn.disabled = true;
+        openPptEditorBtn.disabled = true;
       }
 
       // 渲染参考文档（历史详情可选择隐藏）
@@ -2002,6 +2062,7 @@
       syncAiPromptControls();
       exportDocBtn.disabled = true;
       exportPptBtn.disabled = true;
+      openPptEditorBtn.disabled = true;
     }
 
     historyList.addEventListener('click', (event) => {
@@ -2037,6 +2098,7 @@
     resetBtn.addEventListener('click', resetForm);
     exportDocBtn.addEventListener('click', exportCurrentLessonAsDocx);
     exportPptBtn.addEventListener('click', exportCurrentLessonAsPptx);
+    openPptEditorBtn.addEventListener('click', openCurrentLessonInPptEditor);
     aiVisualEnabledInput.addEventListener('change', syncAiPromptControls);
     imagePromptTypeSelect.addEventListener('change', () => applyAiPromptTemplate({ force: true }));
     imagePromptEditor.addEventListener('input', () => {

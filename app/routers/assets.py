@@ -76,6 +76,21 @@ async def serve_lesson_plan_ui():
     )
 
 
+@router.get("/ppt-editor.html", response_class=HTMLResponse)
+async def serve_ppt_editor_ui():
+    html_file = STATIC_DIR / "ppt-editor.html"
+    if not html_file.exists():
+        raise HTTPException(status_code=404, detail="PPT Editor UI file not found")
+    return HTMLResponse(
+        content=html_file.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 @router.get("/lesson-plan-image/{image_id}")
 async def serve_lesson_plan_image(image_id: str, request: Request):
     image_storage = request.app.state.image_storage

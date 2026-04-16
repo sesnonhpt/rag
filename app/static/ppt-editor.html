@@ -1,0 +1,1643 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PPT 编辑器</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-solid: #ffffff;
+      --line: rgba(15, 23, 42, 0.08);
+      --line-strong: rgba(15, 23, 42, 0.12);
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #8b47ea;
+      --accent-soft: rgba(139, 71, 234, 0.1);
+      --accent-line: rgba(139, 71, 234, 0.28);
+      --danger-soft: #fff1f1;
+      --danger-text: #8f2b2b;
+      --toolbar: rgba(255, 255, 255, 0.8);
+      --shadow-panel: 2px 0 24px rgba(0, 0, 0, 0.02);
+      --shadow-canvas: 0 25px 60px rgba(15, 23, 42, 0.12);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      height: 48px;
+      background: var(--toolbar);
+      backdrop-filter: blur(18px);
+      border-bottom: 1px solid rgba(229, 231, 235, 0.7);
+    }
+    .topbar h1 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      color: #374151;
+      letter-spacing: 0.01em;
+    }
+    .topbar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      transition: all 0.15s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    button:active { transform: scale(0.96); }
+    .btn-primary {
+      background: #ffffff;
+      color: #4b5563;
+      border: 1px solid rgba(229, 231, 235, 0.9);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .btn-primary:hover {
+      border-color: var(--accent-line);
+      color: #6d28d9;
+      background: #fcfbff;
+    }
+    .btn-secondary {
+      background: transparent;
+      color: #6b7280;
+      border: 1px solid transparent;
+    }
+    .btn-secondary:hover {
+      background: rgba(107, 114, 128, 0.08);
+      color: #374151;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 220px 1fr 320px;
+      gap: 0;
+      min-height: calc(100vh - 48px);
+    }
+    .panel {
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+      overflow: auto;
+    }
+    .panel-sidebar {
+      border-right: 1px solid rgba(229, 231, 235, 0.7);
+      box-shadow: var(--shadow-panel);
+      padding: 12px 10px;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      max-height: calc(100vh - 48px);
+    }
+    .panel-inspector {
+      border-left: 1px solid rgba(229, 231, 235, 0.7);
+      box-shadow: -2px 0 24px rgba(0, 0, 0, 0.02);
+      padding: 12px;
+      z-index: 2;
+      min-height: 0;
+      max-height: calc(100vh - 48px);
+    }
+    .panel-stage {
+      background: rgba(249, 250, 251, 0.92);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .sidebar-scroll {
+      overflow-y: auto;
+      overflow-x: hidden;
+      flex: 1;
+      min-height: 0;
+      padding-right: 2px;
+    }
+    .sidebar-section + .sidebar-section { margin-top: 14px; }
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9ca3af;
+    }
+    .deck-list, .slide-list { display: flex; flex-direction: column; gap: 8px; }
+    .slide-meta, .deck-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 100%;
+    }
+    .item-index {
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 800;
+      flex-shrink: 0;
+      background: #f3f4f6;
+      color: #6b7280;
+    }
+    .deck-item.active .item-index,
+    .slide-item.active .item-index {
+      background: var(--accent);
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(139, 71, 234, 0.25);
+    }
+    .item-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #4b5563;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .deck-item.active .item-title,
+    .slide-item.active .item-title {
+      color: #7c3aed;
+    }
+    .deck-item, .slide-item {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 8px;
+      background: transparent;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .deck-item:hover, .slide-item:hover {
+      background: rgba(255, 255, 255, 0.65);
+    }
+    .deck-item.active, .slide-item.active {
+      background: #faf5ff;
+      border-color: rgba(196, 181, 253, 0.8);
+      box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.45);
+    }
+    .muted { color: var(--muted); font-size: 11px; }
+    .panel-stage-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(229, 231, 235, 0.7);
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(18px);
+    }
+    .panel-stage-body {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 18px;
+      background: rgba(249, 250, 251, 0.96);
+    }
+    .slide-list { width: 100%; }
+    .preview {
+      width: min(920px, 100%);
+      aspect-ratio: 16 / 9;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+      border: 1px solid rgba(17, 24, 39, 0.05);
+      box-shadow: var(--shadow-canvas);
+      position: relative;
+    }
+    .preview-canvas { position: relative; width: 100%; height: 100%; background: #fff; }
+    .canvas-element {
+      position: absolute;
+      overflow: hidden;
+      user-select: none;
+      cursor: move;
+    }
+    .canvas-element.is-selected {
+      outline: 1.5px solid var(--accent);
+      box-shadow: 0 0 0 3px rgba(139, 71, 234, 0.14);
+      z-index: 20;
+    }
+    .canvas-text {
+      white-space: pre-wrap;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      overflow: visible;
+    }
+    .canvas-shape { border-radius: 16px; }
+    .canvas-image {
+      border: 1px dashed #d1d5db;
+      border-radius: 12px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background: #f9fafb;
+      color: var(--muted);
+      text-align:center;
+      font-size: 12px;
+      padding: 8px;
+    }
+    .canvas-image.has-image {
+      background-size: cover; background-position: center; background-repeat: no-repeat; color: transparent;
+      border-style: solid;
+    }
+    .canvas-text-editor {
+      position: absolute;
+      margin: 0;
+      padding: 0 0 2px;
+      border: 1.5px solid var(--accent);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.98);
+      color: #223043;
+      resize: none;
+      overflow: hidden;
+      outline: none;
+      z-index: 40;
+      box-sizing: border-box;
+      pointer-events: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      box-shadow: 0 0 0 3px rgba(139, 71, 234, 0.14);
+    }
+    .thumbnail-card {
+      position: relative;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 6px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .thumbnail-card:hover {
+      background: rgba(255, 255, 255, 0.7);
+    }
+    .thumbnail-card.active {
+      background: #faf5ff;
+      border-color: rgba(196, 181, 253, 0.8);
+      box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.45);
+    }
+    .thumbnail-stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #ffffff;
+      border: 1px solid rgba(17, 24, 39, 0.06);
+      box-shadow: 0 2px 12px rgba(15, 23, 42, 0.05);
+    }
+    .thumbnail-element {
+      position: absolute;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .thumbnail-text {
+      overflow: hidden;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .thumbnail-caption {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 7px;
+      padding: 0 2px 1px;
+    }
+    .thumbnail-caption .item-title { font-size: 11px; }
+    .stage-toolbar {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 10px;
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(18px);
+      border-top: 1px solid rgba(229, 231, 235, 0.7);
+      flex-shrink: 0;
+    }
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .toolbar-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px;
+      height: 28px;
+      border-radius: 10px;
+      background: rgba(243, 244, 246, 0.9);
+    }
+    .ctrl-btn {
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      border: 0;
+      background: transparent;
+      color: #6b7280;
+      padding: 0;
+      font-size: 12px;
+    }
+    .ctrl-btn:hover {
+      background: rgba(107, 114, 128, 0.08);
+      color: #374151;
+      transform: none;
+    }
+    .ctrl-btn.primary {
+      color: #6d28d9;
+      background: rgba(139, 71, 234, 0.08);
+    }
+    .toolbar-divider {
+      width: 1px;
+      height: 14px;
+      background: rgba(209, 213, 219, 0.9);
+    }
+    .toolbar-indicator {
+      font-size: 11px;
+      color: #9ca3af;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .hidden-dev { display: none !important; }
+    .resize-handle {
+      position: absolute; width: 10px; height: 10px; border-radius: 999px; background: var(--accent);
+      border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.12); right: -5px; bottom: -5px;
+      cursor: nwse-resize;
+    }
+    .preview-empty {
+      position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted);
+      background:#fff;
+    }
+    label { display: block; font-size: 12px; font-weight: 700; margin: 12px 0 6px; color: #4b5563; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid rgba(229, 231, 235, 1);
+      border-radius: 10px;
+      padding: 9px 11px;
+      font: inherit;
+      font-size: 12px;
+      background: rgba(255,255,255,0.9);
+      color: #111827;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: rgba(167, 139, 250, 0.9);
+      box-shadow: 0 0 0 3px rgba(139, 71, 234, 0.12);
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    .help { font-size: 12px; color: var(--muted); line-height: 1.6; }
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    .inspector-card {
+      border: 1px solid rgba(229, 231, 235, 0.92);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.86);
+      padding: 12px;
+    }
+    .inspector-card + .inspector-card {
+      margin-top: 8px;
+    }
+    .inspector-title {
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9ca3af;
+      margin-bottom: 10px;
+    }
+    .selected-element-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 40px;
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid rgba(226, 232, 240, 0.95);
+      padding: 10px 12px;
+    }
+    .selected-element-pill.is-empty {
+      color: #9ca3af;
+    }
+    .selected-type-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 52px;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(139, 71, 234, 0.08);
+      color: #7c3aed;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 0 8px;
+      flex-shrink: 0;
+    }
+    .selected-name {
+      font-size: 12px;
+      color: #374151;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .element-toolbar { display:flex; gap:8px; flex-wrap:wrap; }
+    .element-toolbar button {
+      color:#4b5563;
+      background:#ffffff;
+      border: 1px solid rgba(229, 231, 235, 0.9);
+    }
+    .element-toolbar button:hover {
+      border-color: var(--accent-line);
+      color: #6d28d9;
+      background: #fcfbff;
+    }
+    .checkbox-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+    .checkbox-row input { width: auto; }
+    .danger-btn {
+      color: var(--danger-text) !important;
+      background: var(--danger-soft) !important;
+      border: 1px solid rgba(239, 68, 68, 0.12) !important;
+    }
+    .toolbar-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px rgba(139, 71, 234, 0.12);
+    }
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 1fr; }
+      .panel-sidebar, .panel-inspector {
+        border: 0;
+        box-shadow: none;
+      }
+      .slide-list {
+        width: 100%;
+      }
+      .preview {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <h1>PPT Editor</h1>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn-secondary" id="refresh-decks-btn" type="button">刷新列表</button>
+      <button class="btn-secondary" id="add-slide-btn" type="button">新增页面</button>
+      <button class="btn-secondary" id="save-deck-btn" type="button">保存</button>
+      <button class="btn-primary" id="export-deck-btn" type="button">导出 PPTX</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="panel panel-sidebar">
+      <div class="sidebar-scroll">
+        <div class="sidebar-section">
+          <h2>课件列表</h2>
+          <div class="deck-list" id="deck-list"></div>
+        </div>
+        <div class="sidebar-section">
+          <h2>页面缩略图</h2>
+          <div class="slide-list" id="slide-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel panel-stage">
+      <div class="panel-stage-header">
+        <div class="toolbar-row">
+          <h2 style="margin:0;">页面预览</h2>
+          <div class="muted">16:9 Canvas</div>
+        </div>
+      </div>
+      <div class="panel-stage-body">
+        <div class="preview" id="slide-preview">
+          <div class="preview-header">请先选择课件</div>
+          <div class="preview-body standard">
+            <div class="preview-card">当前没有可预览的页面</div>
+          </div>
+        </div>
+      </div>
+      <div class="stage-toolbar">
+        <div class="toolbar-group">
+          <button class="ctrl-btn" id="toolbar-prev-btn" type="button" aria-label="上一页">‹</button>
+          <span class="toolbar-indicator" id="toolbar-page-indicator">0 / 0</span>
+          <button class="ctrl-btn" id="toolbar-next-btn" type="button" aria-label="下一页">›</button>
+        </div>
+        <div class="toolbar-group">
+          <div class="toolbar-pill">
+            <button class="ctrl-btn" id="toolbar-add-text-btn" type="button" aria-label="新增文字">T</button>
+            <button class="ctrl-btn" id="toolbar-add-shape-btn" type="button" aria-label="新增形状">□</button>
+            <button class="ctrl-btn" id="toolbar-add-image-btn" type="button" aria-label="新增图片">🖼</button>
+          </div>
+          <div class="toolbar-divider"></div>
+          <button class="ctrl-btn primary" id="toolbar-add-slide-btn" type="button" aria-label="新增页面">＋</button>
+          <button class="ctrl-btn" id="toolbar-save-btn" type="button" aria-label="保存">⤓</button>
+          <button class="ctrl-btn" id="toolbar-export-btn" type="button" aria-label="导出">⇩</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel panel-inspector">
+      <h2>属性编辑</h2>
+      <div class="stack">
+        <div class="inspector-card">
+          <div class="inspector-title">当前页面</div>
+          <label for="deck-title">课件标题</label>
+          <input id="deck-title" type="text" />
+
+          <label for="slide-layout">页面版式</label>
+          <select id="slide-layout">
+            <option value="cover">封面页</option>
+            <option value="standard">标准页</option>
+            <option value="two_column">图文双栏</option>
+            <option value="practice">练习页</option>
+            <option value="summary">总结页</option>
+          </select>
+
+          <label for="slide-title">页面标题</label>
+          <input id="slide-title" type="text" />
+
+          <label for="slide-accent">强调文本</label>
+          <input id="slide-accent" type="text" />
+
+          <label for="slide-bullets">要点列表</label>
+          <textarea id="slide-bullets" placeholder="每行一个 bullet"></textarea>
+
+          <label for="slide-paragraphs">补充文本</label>
+          <textarea id="slide-paragraphs" placeholder="每行一段"></textarea>
+
+          <label for="slide-notes">讲解提示 / speaker notes</label>
+          <textarea id="slide-notes" placeholder="每行一条备注"></textarea>
+
+          <label for="slide-images">图片地址</label>
+          <textarea id="slide-images" placeholder="每行一个图片 URL，如 /lesson-plan-image/xxx"></textarea>
+        </div>
+
+        <div class="hidden-dev">
+          <label for="slide-elements">元素 JSON</label>
+          <textarea id="slide-elements" style="min-height:200px;" placeholder='[{"id":"title","type":"text",...}]'></textarea>
+        </div>
+
+        <div class="inspector-card">
+          <div class="inspector-title">选中元素</div>
+          <div class="selected-element-pill is-empty" id="selected-element-pill">
+            <span class="selected-name" id="selected-element-name">先在画布里单击一个元素</span>
+          </div>
+
+          <label>画布元素</label>
+          <div class="element-toolbar">
+            <button class="btn-secondary" id="add-text-element-btn" type="button">新增文字</button>
+            <button class="btn-secondary" id="add-shape-element-btn" type="button">新增形状</button>
+            <button class="btn-secondary" id="add-image-element-btn" type="button">新增图片</button>
+            <button class="btn-secondary danger-btn" id="delete-element-btn" type="button">删除元素</button>
+          </div>
+
+          <div class="hidden-dev">
+            <label for="element-id">选中元素</label>
+            <input id="element-id" type="text" readonly />
+
+            <div class="row">
+              <div>
+                <label for="element-type">类型</label>
+                <select id="element-type">
+                  <option value="text">text</option>
+                  <option value="shape">shape</option>
+                  <option value="image">image</option>
+                </select>
+              </div>
+              <div>
+                <label for="element-font-size">字号</label>
+                <input id="element-font-size" type="number" min="8" max="64" />
+              </div>
+            </div>
+
+            <div class="row">
+              <div>
+                <label for="element-x">X</label>
+                <input id="element-x" type="number" step="1" />
+              </div>
+              <div>
+                <label for="element-y">Y</label>
+                <input id="element-y" type="number" step="1" />
+              </div>
+            </div>
+
+            <div class="row">
+              <div>
+                <label for="element-w">W</label>
+                <input id="element-w" type="number" step="1" min="10" />
+              </div>
+              <div>
+                <label for="element-h">H</label>
+                <input id="element-h" type="number" step="1" min="10" />
+              </div>
+            </div>
+          </div>
+
+          <label for="element-text" id="element-text-label">文本内容</label>
+          <textarea id="element-text" placeholder="选中文字元素后，在这里编辑内容"></textarea>
+
+          <div class="row">
+            <div>
+              <label for="element-fill-color" id="element-fill-color-label">填充色</label>
+              <input id="element-fill-color" type="text" placeholder="#ffffff" />
+            </div>
+            <div>
+              <label for="element-text-color">文字色</label>
+              <input id="element-text-color" type="text" placeholder="#223043" />
+            </div>
+          </div>
+
+          <label class="checkbox-row">
+            <input id="element-bold" type="checkbox" />
+            <span>粗体</span>
+          </label>
+        </div>
+
+        <div class="row">
+          <button class="btn-secondary" id="regen-elements-btn" type="button">重建元素</button>
+          <button class="btn-secondary" id="move-up-btn" type="button">上移</button>
+          <button class="btn-secondary" id="move-down-btn" type="button">下移</button>
+          <button class="btn-secondary danger-btn" id="delete-slide-btn" type="button">删除页</button>
+        </div>
+
+        <div class="help">
+          当前是结构化编辑版。先支持：标题、要点、备注、版式、图片链接和页面顺序调整。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const deckList = document.getElementById('deck-list');
+    const slideList = document.getElementById('slide-list');
+    const slidePreview = document.getElementById('slide-preview');
+    const deckTitleInput = document.getElementById('deck-title');
+    const slideLayoutInput = document.getElementById('slide-layout');
+    const slideTitleInput = document.getElementById('slide-title');
+    const slideAccentInput = document.getElementById('slide-accent');
+    const slideBulletsInput = document.getElementById('slide-bullets');
+    const slideParagraphsInput = document.getElementById('slide-paragraphs');
+    const slideNotesInput = document.getElementById('slide-notes');
+    const slideImagesInput = document.getElementById('slide-images');
+    const slideElementsInput = document.getElementById('slide-elements');
+    const elementIdInput = document.getElementById('element-id');
+    const elementTypeInput = document.getElementById('element-type');
+    const elementFontSizeInput = document.getElementById('element-font-size');
+    const elementXInput = document.getElementById('element-x');
+    const elementYInput = document.getElementById('element-y');
+    const elementWInput = document.getElementById('element-w');
+    const elementHInput = document.getElementById('element-h');
+    const elementTextInput = document.getElementById('element-text');
+    const elementFillColorInput = document.getElementById('element-fill-color');
+    const elementTextColorInput = document.getElementById('element-text-color');
+    const elementBoldInput = document.getElementById('element-bold');
+    const refreshDecksBtn = document.getElementById('refresh-decks-btn');
+    const saveDeckBtn = document.getElementById('save-deck-btn');
+    const exportDeckBtn = document.getElementById('export-deck-btn');
+    const addSlideBtn = document.getElementById('add-slide-btn');
+    const moveUpBtn = document.getElementById('move-up-btn');
+    const moveDownBtn = document.getElementById('move-down-btn');
+    const deleteSlideBtn = document.getElementById('delete-slide-btn');
+    const regenElementsBtn = document.getElementById('regen-elements-btn');
+    const addTextElementBtn = document.getElementById('add-text-element-btn');
+    const addShapeElementBtn = document.getElementById('add-shape-element-btn');
+    const addImageElementBtn = document.getElementById('add-image-element-btn');
+    const deleteElementBtn = document.getElementById('delete-element-btn');
+    const toolbarPrevBtn = document.getElementById('toolbar-prev-btn');
+    const toolbarNextBtn = document.getElementById('toolbar-next-btn');
+    const toolbarAddTextBtn = document.getElementById('toolbar-add-text-btn');
+    const toolbarAddShapeBtn = document.getElementById('toolbar-add-shape-btn');
+    const toolbarAddImageBtn = document.getElementById('toolbar-add-image-btn');
+    const toolbarAddSlideBtn = document.getElementById('toolbar-add-slide-btn');
+    const toolbarSaveBtn = document.getElementById('toolbar-save-btn');
+    const toolbarExportBtn = document.getElementById('toolbar-export-btn');
+    const toolbarPageIndicator = document.getElementById('toolbar-page-indicator');
+    const selectedElementPill = document.getElementById('selected-element-pill');
+    const selectedElementName = document.getElementById('selected-element-name');
+    const elementTextLabel = document.getElementById('element-text-label');
+    const elementFillColorLabel = document.getElementById('element-fill-color-label');
+
+    let decks = [];
+    let currentDeck = null;
+    let currentSlideIndex = 0;
+    let selectedElementId = null;
+    let dragState = null;
+    let isTypingInField = false;
+    let previewAutoFitScheduled = false;
+    let inlineEditingElementId = null;
+    let inlineEditingDraft = '';
+    const DRAG_THRESHOLD_PX = 4;
+    let suppressClickUntil = 0;
+
+    function getDeckIdFromQuery() {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('deck_id');
+    }
+
+    function textToLines(value) {
+      return String(value || '').split('\n').map(item => item.trim()).filter(Boolean);
+    }
+
+    function parseElementsJson(value) {
+      try {
+        const payload = JSON.parse(value || '[]');
+        return Array.isArray(payload) ? payload : [];
+      } catch {
+        return null;
+      }
+    }
+
+    function buildDefaultElements(slide) {
+      const elements = [];
+      const bullets = Array.isArray(slide.bullets) && slide.bullets.length ? slide.bullets : (slide.paragraphs || []);
+      if (slide.layout === 'cover') {
+        elements.push(
+          { id: 'cover_bg', type: 'shape', x: 0, y: 0, w: 1000, h: 562.5, fill_color: '#f3f7fc' },
+          { id: 'cover_stripe', type: 'shape', x: 70, y: 70, w: 16, h: 160, fill_color: '#1d5fad' },
+          { id: 'cover_title', type: 'text', x: 110, y: 88, w: 760, h: 80, text: slide.title, font_size: 30, bold: true, text_color: '#1b2b47' },
+        );
+        bullets.slice(0, 3).forEach((item, index) => {
+          elements.push({ id: `cover_bullet_${index}`, type: 'text', x: 118, y: 205 + index * 38, w: 440, h: 30, text: `• ${item}`, font_size: 20, text_color: '#334765' });
+        });
+        return elements;
+      }
+
+      let accent = '#1d5fad';
+      if (slide.layout === 'summary') accent = '#418553';
+      if (slide.layout === 'practice') accent = '#bb6519';
+      if (slide.layout === 'standard') accent = '#4a528c';
+
+      elements.push(
+        { id: 'header_bar', type: 'shape', x: 0, y: 0, w: 1000, h: 46, fill_color: accent },
+        { id: 'header_title', type: 'text', x: 56, y: 10, w: 820, h: 28, text: slide.title, font_size: 22, bold: true, text_color: '#ffffff' },
+      );
+      if (slide.accent_text) {
+        elements.push({ id: 'accent_text', type: 'text', x: 70, y: 72, w: 760, h: 26, text: slide.accent_text, font_size: 15, bold: true, text_color: accent });
+      }
+      const startY = slide.accent_text ? 118 : 92;
+
+      if (slide.layout === 'two_column') {
+        bullets.slice(0, 6).forEach((item, index) => {
+          elements.push({ id: `bullet_${index}`, type: 'text', x: 72, y: startY + index * 46, w: 430, h: 34, text: `• ${item}`, font_size: 20, text_color: '#242b36' });
+        });
+        elements.push({ id: 'image_panel', type: 'shape', x: 675, y: 104, w: 260, h: 214, fill_color: '#f7f9fc' });
+        if (slide.image_sources?.[0]) {
+          elements.push({ id: 'main_image', type: 'image', x: 684, y: 112, w: 242, h: 194, src: slide.image_sources[0] });
+        } else {
+          elements.push({ id: 'image_hint', type: 'text', x: 708, y: 184, w: 194, h: 50, text: '此页适合放置示意图或案例图', font_size: 14, bold: true, text_color: '#66758a' });
+        }
+      } else if (slide.layout === 'practice') {
+        bullets.slice(0, 5).forEach((item, index) => {
+          const y = 98 + index * 84;
+          elements.push(
+            { id: `practice_box_${index}`, type: 'shape', x: 64, y, w: 870, h: 58, fill_color: '#fcf7f0' },
+            { id: `practice_text_${index}`, type: 'text', x: 84, y: y + 13, w: 820, h: 28, text: `${index + 1}. ${item}`, font_size: 18, text_color: '#443621' },
+          );
+        });
+      } else {
+        if (slide.layout === 'summary') {
+          elements.push({ id: 'summary_panel', type: 'shape', x: 76, y: 94, w: 848, h: 340, fill_color: '#f4faf5' });
+        }
+        bullets.slice(0, 6).forEach((item, index) => {
+          elements.push({ id: `bullet_${index}`, type: 'text', x: 96, y: startY + index * 48, w: 790, h: 34, text: `• ${item}`, font_size: slide.layout === 'summary' ? 20 : 19, text_color: '#242b36' });
+        });
+      }
+      return elements;
+    }
+
+    function getCurrentSlide() {
+      if (!currentDeck?.slides?.length) return null;
+      return currentDeck.slides[currentSlideIndex] || null;
+    }
+
+    function ensureSlideElements(slide) {
+      if (!slide) return [];
+      if (!Array.isArray(slide.elements) || !slide.elements.length) {
+        slide.elements = buildDefaultElements(slide);
+      }
+      return slide.elements;
+    }
+
+    function estimateTextElementHeight(element) {
+      const text = String(element?.text || '');
+      const width = Math.max(40, Number(element?.w || 100));
+      const fontSize = Math.max(12, Number(element?.font_size || 18));
+      const charsPerLine = Math.max(6, Math.floor(width / (fontSize * 0.62)));
+      const logicalLines = text
+        .split('\n')
+        .map((line) => Math.max(1, Math.ceil(line.length / charsPerLine)))
+        .reduce((total, count) => total + count, 0);
+      return Math.max(28, Math.ceil(logicalLines * fontSize * 1.35 + 10));
+    }
+
+    function normalizeTextElementBounds(element) {
+      if (!element || element.type !== 'text') return element;
+      const estimated = estimateTextElementHeight(element);
+      if (Number(element.h || 0) < estimated) {
+        element.h = estimated;
+      }
+      return element;
+    }
+
+    function getSelectedElement() {
+      const slide = getCurrentSlide();
+      if (!slide) return null;
+      return ensureSlideElements(slide).find((item) => item.id === selectedElementId) || null;
+    }
+
+    function selectElement(elementId) {
+      if (inlineEditingElementId && elementId !== inlineEditingElementId) {
+        commitInlineTextEdit();
+      }
+      selectedElementId = elementId || null;
+      syncElementForm();
+      renderPreview();
+    }
+
+    function getInlineEditingElement() {
+      const slide = getCurrentSlide();
+      if (!slide || !inlineEditingElementId) return null;
+      return ensureSlideElements(slide).find((item) => item.id === inlineEditingElementId) || null;
+    }
+
+    function beginInlineTextEdit(elementId) {
+      const slide = getCurrentSlide();
+      if (!slide) return;
+      const element = ensureSlideElements(slide).find((item) => item.id === elementId && item.type === 'text');
+      if (!element) return;
+      dragState = null;
+      suppressClickUntil = Date.now() + 160;
+      inlineEditingElementId = element.id;
+      inlineEditingDraft = String(element.text || '');
+      selectedElementId = element.id;
+      syncElementForm();
+      renderPreview();
+    }
+
+    function commitInlineTextEdit() {
+      const slide = getCurrentSlide();
+      const element = getInlineEditingElement();
+      if (!slide || !element) {
+        inlineEditingElementId = null;
+        inlineEditingDraft = '';
+        return;
+      }
+      element.text = inlineEditingDraft;
+      normalizeTextElementBounds(element);
+      updateElementsTextarea(slide);
+      syncElementForm();
+      inlineEditingElementId = null;
+      inlineEditingDraft = '';
+      renderPreview();
+    }
+
+    function cancelInlineTextEdit() {
+      if (!inlineEditingElementId) return;
+      inlineEditingElementId = null;
+      inlineEditingDraft = '';
+      renderPreview();
+    }
+
+    function syncElementForm() {
+      const element = getSelectedElement();
+      if (!element) {
+        selectedElementPill.classList.add('is-empty');
+        selectedElementPill.innerHTML = '<span class="selected-name" id="selected-element-name">先在画布里单击一个元素</span>';
+        elementTextLabel.textContent = '文本内容';
+        elementFillColorLabel.textContent = '填充色';
+        elementIdInput.value = '';
+        elementTypeInput.value = 'text';
+        elementFontSizeInput.value = '';
+        elementXInput.value = '';
+        elementYInput.value = '';
+        elementWInput.value = '';
+        elementHInput.value = '';
+        elementTextInput.value = '';
+        elementFillColorInput.value = '';
+        elementTextColorInput.value = '';
+        elementBoldInput.checked = false;
+        return;
+      }
+      selectedElementPill.classList.remove('is-empty');
+      const typeLabel = element.type === 'text' ? '文字' : (element.type === 'image' ? '图片' : '形状');
+      const nameLabel =
+        element.type === 'text'
+          ? (String(element.text || '').trim() || '未命名文字')
+          : element.type === 'image'
+            ? (String(element.src || '').trim() || '图片元素')
+            : '形状元素';
+      selectedElementPill.innerHTML = `
+        <span class="selected-type-badge">${typeLabel}</span>
+        <span class="selected-name">${escapeHtml(nameLabel)}</span>
+      `;
+      elementTextLabel.textContent = element.type === 'image' ? '图片地址' : '文本内容';
+      elementFillColorLabel.textContent = element.type === 'shape' ? '填充色' : '背景色';
+      elementIdInput.value = element.id || '';
+      elementTypeInput.value = element.type || 'text';
+      elementFontSizeInput.value = element.font_size ?? '';
+      elementXInput.value = Math.round(Number(element.x || 0));
+      elementYInput.value = Math.round(Number(element.y || 0));
+      elementWInput.value = Math.round(Number(element.w || 0));
+      elementHInput.value = Math.round(Number(element.h || 0));
+      elementTextInput.value = element.type === 'image' ? (element.src || '') : (element.text || '');
+      elementFillColorInput.value = element.fill_color || '';
+      elementTextColorInput.value = element.text_color || '';
+      elementBoldInput.checked = !!element.bold;
+    }
+
+    function updateElementsTextarea(slide) {
+      ensureSlideElements(slide).forEach(normalizeTextElementBounds);
+      slideElementsInput.value = JSON.stringify(ensureSlideElements(slide), null, 2);
+    }
+
+    function applyElementForm() {
+      const element = getSelectedElement();
+      if (!element) return;
+      element.type = elementTypeInput.value;
+      element.font_size = elementFontSizeInput.value ? Number(elementFontSizeInput.value) : null;
+      element.x = Number(elementXInput.value || 0);
+      element.y = Number(elementYInput.value || 0);
+      element.w = Math.max(10, Number(elementWInput.value || 100));
+      element.h = Math.max(10, Number(elementHInput.value || 40));
+      element.bold = !!elementBoldInput.checked;
+      element.fill_color = elementFillColorInput.value.trim() || null;
+      element.text_color = elementTextColorInput.value.trim() || null;
+      if (element.type === 'image') {
+        element.src = elementTextInput.value.trim() || '';
+        element.text = null;
+      } else {
+        element.text = elementTextInput.value;
+        if (element.type !== 'image') {
+          element.src = null;
+        }
+      }
+      const slide = getCurrentSlide();
+      if (slide) {
+        normalizeTextElementBounds(element);
+        updateElementsTextarea(slide);
+      }
+      renderPreview();
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll("'", '&#39;')
+        .replaceAll('"', '&quot;');
+    }
+
+    function renderThumbnailMarkup(slide) {
+      const elements = ensureSlideElements(slide).slice(0, 10).map((element) => normalizeTextElementBounds({ ...element }));
+      const content = elements.map((element) => {
+        const left = `${(Number(element.x || 0) / 1000) * 100}%`;
+        const top = `${(Number(element.y || 0) / 562.5) * 100}%`;
+        const width = `${(Number(element.w || 100) / 1000) * 100}%`;
+        const height = `${(Number(element.h || 40) / 562.5) * 100}%`;
+        const baseStyle = `left:${left};top:${top};width:${width};height:${height};`;
+        if (element.type === 'shape') {
+          return `<div class="thumbnail-element" style="${baseStyle}background:${escapeHtml(element.fill_color || '#f3f4f6')};border-radius:${Number(element.radius || 12)}px;"></div>`;
+        }
+        if (element.type === 'image') {
+          if (element.src) {
+            return `<div class="thumbnail-element" style="${baseStyle}background-image:url('${escapeHtml(element.src)}');background-size:cover;background-position:center;border-radius:8px;border:1px solid rgba(17,24,39,0.06);"></div>`;
+          }
+          return `<div class="thumbnail-element" style="${baseStyle}background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;"></div>`;
+        }
+        const fontSize = Math.max(7, Number(element.font_size || 18) * 0.2);
+        const color = escapeHtml(element.text_color || '#1f2937');
+        const weight = element.bold ? 700 : 500;
+        return `<div class="thumbnail-element thumbnail-text" style="left:${left};top:${top};width:${width};height:${height};font-size:${fontSize}px;line-height:1.12;color:${color};font-weight:${weight};">${escapeHtml(element.text || '')}</div>`;
+      }).join('');
+
+      return `
+        <div class="thumbnail-stage">${content}</div>
+        <div class="thumbnail-caption">
+          <span class="item-index">${slide.order + 1}</span>
+          <span class="item-title">${escapeHtml(slide.title || `页面 ${slide.order + 1}`)}</span>
+        </div>
+      `;
+    }
+
+    function renderDeckList() {
+      if (!decks.length) {
+        deckList.innerHTML = '<div class="muted">还没有保存的课件。</div>';
+        return;
+      }
+      deckList.innerHTML = decks.map((deck, index) => `
+        <div class="deck-item ${currentDeck?.deck_id === deck.deck_id ? 'active' : ''}" data-deck-id="${deck.deck_id}">
+          <div class="deck-meta">
+            <span class="item-index">${index + 1}</span>
+            <span class="item-title">${deck.title}</span>
+          </div>
+          <div class="muted">${deck.topic || '未设置主题'} · ${deck.slide_count || 0} 页</div>
+        </div>
+      `).join('');
+    }
+
+    function renderSlideList() {
+      if (!currentDeck?.slides?.length) {
+        slideList.innerHTML = '<div class="muted">当前课件还没有页面。</div>';
+        toolbarPageIndicator.textContent = '0 / 0';
+        return;
+      }
+      slideList.innerHTML = currentDeck.slides.map((slide, index) => `
+        <div class="thumbnail-card ${index === currentSlideIndex ? 'active' : ''}" data-slide-index="${index}">
+          ${renderThumbnailMarkup(slide)}
+          <div class="muted" style="padding:0 2px 2px 28px;">${slide.layout}</div>
+        </div>
+      `).join('');
+      toolbarPageIndicator.textContent = `${currentSlideIndex + 1} / ${currentDeck.slides.length}`;
+    }
+
+    function renderPreview() {
+      if (!currentDeck?.slides?.length) {
+        slidePreview.innerHTML = `
+          <div class="preview-empty">当前没有可预览的页面</div>
+        `;
+        return;
+      }
+      const slide = currentDeck.slides[currentSlideIndex];
+      const elements = Array.isArray(slide.elements) && slide.elements.length ? slide.elements : buildDefaultElements(slide);
+      slide.elements = elements.map((element) => normalizeTextElementBounds(element));
+      slidePreview.innerHTML = `<div class="preview-canvas"></div>`;
+      const canvas = slidePreview.querySelector('.preview-canvas');
+      canvas.addEventListener('mousedown', (event) => {
+        if (event.target === canvas) {
+          selectElement(null);
+        }
+      });
+      const markSelectedNode = (nextNode) => {
+        canvas.querySelectorAll('.canvas-element.is-selected').forEach((item) => {
+          if (item !== nextNode) item.classList.remove('is-selected');
+        });
+        if (nextNode) {
+          nextNode.classList.add('is-selected');
+        }
+      };
+      elements.forEach((element) => {
+        const node = document.createElement('div');
+        node.className = `canvas-element canvas-${element.type}${selectedElementId === element.id ? ' is-selected' : ''}`;
+        node.dataset.elementId = element.id;
+        node.style.left = `${(Number(element.x || 0) / 1000) * 100}%`;
+        node.style.top = `${(Number(element.y || 0) / 562.5) * 100}%`;
+        node.style.width = `${(Number(element.w || 100) / 1000) * 100}%`;
+        node.style.userSelect = 'none';
+        node.style.webkitUserSelect = 'none';
+        const scaledHeight = `${(Number(element.h || 40) / 562.5) * 100}%`;
+        if (element.type === 'text') {
+          node.style.minHeight = scaledHeight;
+          node.style.height = 'auto';
+        } else {
+          node.style.height = scaledHeight;
+        }
+        node.addEventListener('mousedown', (event) => {
+          event.stopPropagation();
+          if (element.type === 'text' && event.detail > 1) {
+            event.preventDefault();
+            dragState = null;
+            return;
+          }
+          if (inlineEditingElementId && inlineEditingElementId !== element.id) {
+            commitInlineTextEdit();
+          }
+          dragState = {
+            mode: 'move',
+            elementId: element.id,
+            startX: event.clientX,
+            startY: event.clientY,
+            originX: Number(element.x || 0),
+            originY: Number(element.y || 0),
+            originW: Number(element.w || 100),
+            originH: Number(element.h || 40),
+            hasMoved: false,
+          };
+        });
+        node.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (Date.now() < suppressClickUntil) return;
+          selectedElementId = element.id;
+          syncElementForm();
+          markSelectedNode(node);
+        });
+        if (element.type === 'shape') {
+          node.style.background = element.fill_color || '#f7f9fc';
+          node.style.borderRadius = `${element.radius || 16}px`;
+        } else if (element.type === 'image') {
+          if (element.src) {
+            node.classList.add('has-image');
+            node.style.backgroundImage = `url("${String(element.src).replace(/"/g, '&quot;')}")`;
+            node.textContent = '';
+          } else {
+            node.innerHTML = '图片';
+          }
+        } else {
+          node.textContent = element.text || '';
+          node.style.fontSize = `${Math.max(10, Number(element.font_size || 18) * 0.8)}px`;
+          node.style.fontWeight = element.bold ? '700' : '500';
+          node.style.color = element.text_color || '#223043';
+          node.style.paddingBottom = '2px';
+          if (inlineEditingElementId === element.id) {
+            node.style.visibility = 'hidden';
+          }
+        }
+        if (selectedElementId === element.id) {
+          const resizeHandle = document.createElement('div');
+          resizeHandle.className = 'resize-handle';
+          resizeHandle.addEventListener('mousedown', (event) => {
+            event.stopPropagation();
+            dragState = {
+              mode: 'resize',
+              elementId: element.id,
+              startX: event.clientX,
+              startY: event.clientY,
+              originX: Number(element.x || 0),
+              originY: Number(element.y || 0),
+              originW: Number(element.w || 100),
+              originH: Number(element.h || 40),
+              hasMoved: true,
+            };
+          });
+          node.appendChild(resizeHandle);
+        }
+        canvas.appendChild(node);
+      });
+      const inlineElement = getInlineEditingElement();
+      if (inlineElement && inlineElement.type === 'text') {
+        const editor = document.createElement('textarea');
+        editor.className = 'canvas-text-editor';
+        editor.value = inlineEditingDraft;
+        editor.dataset.elementId = inlineElement.id;
+        editor.style.left = `${(Number(inlineElement.x || 0) / 1000) * 100}%`;
+        editor.style.top = `${(Number(inlineElement.y || 0) / 562.5) * 100}%`;
+        editor.style.width = `${(Number(inlineElement.w || 100) / 1000) * 100}%`;
+        const baseHeight = `${(Number(inlineElement.h || 40) / 562.5) * 100}%`;
+        editor.style.minHeight = baseHeight;
+        editor.style.height = baseHeight;
+        editor.style.fontSize = `${Math.max(10, Number(inlineElement.font_size || 18) * 0.8)}px`;
+        editor.style.lineHeight = '1.3';
+        editor.style.fontWeight = inlineElement.bold ? '700' : '500';
+        editor.style.color = inlineElement.text_color || '#223043';
+        editor.addEventListener('mousedown', (event) => {
+          event.stopPropagation();
+          event.preventDefault();
+        });
+        editor.addEventListener('input', () => {
+          inlineEditingDraft = editor.value;
+          const slideElement = getInlineEditingElement();
+          if (!slideElement) return;
+          slideElement.text = inlineEditingDraft;
+          normalizeTextElementBounds(slideElement);
+          updateElementsTextarea(slide);
+          syncElementForm();
+          editor.style.height = 'auto';
+          editor.style.height = `${Math.max(editor.scrollHeight, editor.clientHeight)}px`;
+        });
+        editor.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            cancelInlineTextEdit();
+            return;
+          }
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.preventDefault();
+            commitInlineTextEdit();
+          }
+        });
+        editor.addEventListener('blur', () => {
+          commitInlineTextEdit();
+        });
+        canvas.appendChild(editor);
+        window.requestAnimationFrame(() => {
+          editor.focus();
+          editor.setSelectionRange(editor.value.length, editor.value.length);
+          editor.style.height = 'auto';
+          editor.style.height = `${Math.max(editor.scrollHeight, editor.clientHeight)}px`;
+        });
+      }
+      schedulePreviewTextAutofit(canvas, slide);
+    }
+
+    function schedulePreviewTextAutofit(canvas, slide) {
+      if (previewAutoFitScheduled) return;
+      previewAutoFitScheduled = true;
+      window.requestAnimationFrame(() => {
+        previewAutoFitScheduled = false;
+        if (!canvas || !slide) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        if (!canvasRect.height) return;
+        let changed = false;
+        canvas.querySelectorAll('.canvas-text').forEach((node) => {
+          const elementId = node.dataset.elementId;
+          if (!elementId) return;
+          const element = ensureSlideElements(slide).find((item) => item.id === elementId);
+          if (!element) return;
+          const requiredPx = Math.ceil(node.scrollHeight);
+          const currentPx = Math.ceil(node.clientHeight);
+          if (requiredPx > currentPx + 2) {
+            const requiredCanvasHeight = (requiredPx / canvasRect.height) * 562.5 + 6;
+            if (requiredCanvasHeight > Number(element.h || 0)) {
+              element.h = Math.ceil(requiredCanvasHeight);
+              changed = true;
+            }
+          }
+        });
+        if (changed) {
+          updateElementsTextarea(slide);
+          if (slide === getCurrentSlide()) {
+            syncElementForm();
+            renderPreview();
+          }
+        }
+      });
+    }
+
+    function syncForm() {
+      if (!currentDeck?.slides?.length) return;
+      const slide = currentDeck.slides[currentSlideIndex];
+      deckTitleInput.value = currentDeck.title || '';
+      slideLayoutInput.value = slide.layout || 'standard';
+      slideTitleInput.value = slide.title || '';
+      slideAccentInput.value = slide.accent_text || '';
+      slideBulletsInput.value = (slide.bullets || []).join('\n');
+      slideParagraphsInput.value = (slide.paragraphs || []).join('\n');
+      slideNotesInput.value = (slide.speaker_notes || []).join('\n');
+      slideImagesInput.value = (slide.image_sources || []).join('\n');
+      updateElementsTextarea(slide);
+      syncElementForm();
+    }
+
+    function renderAll() {
+      renderDeckList();
+      renderSlideList();
+      renderPreview();
+      syncForm();
+    }
+
+    function applyFormToCurrentSlide() {
+      if (!currentDeck?.slides?.length) return;
+      const slide = currentDeck.slides[currentSlideIndex];
+      currentDeck.title = deckTitleInput.value.trim() || currentDeck.title;
+      slide.layout = slideLayoutInput.value;
+      slide.title = slideTitleInput.value.trim() || `页面${currentSlideIndex + 1}`;
+      slide.accent_text = slideAccentInput.value.trim() || null;
+      slide.bullets = textToLines(slideBulletsInput.value);
+      slide.paragraphs = textToLines(slideParagraphsInput.value);
+      slide.speaker_notes = textToLines(slideNotesInput.value);
+      slide.image_sources = textToLines(slideImagesInput.value);
+      const parsedElements = parseElementsJson(slideElementsInput.value);
+      if (parsedElements !== null) {
+        slide.elements = parsedElements;
+      }
+      if (selectedElementId && !ensureSlideElements(slide).some(item => item.id === selectedElementId)) {
+        selectedElementId = null;
+      }
+      renderAll();
+    }
+
+    async function loadDecks() {
+      const response = await fetch('/ppt-decks');
+      const data = await response.json();
+      decks = Array.isArray(data.decks) ? data.decks : [];
+      renderDeckList();
+    }
+
+    async function loadDeck(deckId) {
+      const response = await fetch(`/ppt-decks/${encodeURIComponent(deckId)}`);
+      if (!response.ok) throw new Error(`加载失败 (${response.status})`);
+      const data = await response.json();
+      currentDeck = data.deck;
+      currentSlideIndex = 0;
+      selectedElementId = null;
+      renderAll();
+    }
+
+    async function saveDeck() {
+      if (!currentDeck) return;
+      applyFormToCurrentSlide();
+      const response = await fetch(`/ppt-decks/${encodeURIComponent(currentDeck.deck_id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: currentDeck.title,
+          topic: currentDeck.topic,
+          template_category: currentDeck.template_category,
+          slides: currentDeck.slides,
+          theme: currentDeck.theme,
+          source_snapshot: currentDeck.source_snapshot,
+        }),
+      });
+      if (!response.ok) throw new Error(`保存失败 (${response.status})`);
+      const data = await response.json();
+      currentDeck = data.deck;
+      await loadDecks();
+      renderAll();
+    }
+
+    async function exportDeck() {
+      if (!currentDeck) return;
+      applyFormToCurrentSlide();
+      await saveDeck();
+      const response = await fetch(`/ppt-decks/${encodeURIComponent(currentDeck.deck_id)}/export-pptx`, { method: 'POST' });
+      if (!response.ok) throw new Error(`导出失败 (${response.status})`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${currentDeck.title || 'lesson-slides'}.pptx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function addSlide() {
+      if (!currentDeck) return;
+      applyFormToCurrentSlide();
+      currentDeck.slides.push({
+        id: `slide_${Date.now()}`,
+        order: currentDeck.slides.length,
+        layout: 'standard',
+        title: `新页面 ${currentDeck.slides.length + 1}`,
+        bullets: [],
+        paragraphs: [],
+        speaker_notes: [],
+        image_sources: [],
+        accent_text: null,
+        elements: [],
+      });
+      currentSlideIndex = currentDeck.slides.length - 1;
+      selectedElementId = null;
+      renderAll();
+    }
+
+    function moveSlide(direction) {
+      if (!currentDeck?.slides?.length) return;
+      const target = currentSlideIndex + direction;
+      if (target < 0 || target >= currentDeck.slides.length) return;
+      const [slide] = currentDeck.slides.splice(currentSlideIndex, 1);
+      currentDeck.slides.splice(target, 0, slide);
+      currentDeck.slides = currentDeck.slides.map((item, index) => ({ ...item, order: index }));
+      currentSlideIndex = target;
+      renderAll();
+    }
+
+    function deleteSlide() {
+      if (!currentDeck?.slides?.length) return;
+      currentDeck.slides.splice(currentSlideIndex, 1);
+      if (!currentDeck.slides.length) {
+        currentDeck.slides.push({
+          id: `slide_${Date.now()}`,
+          order: 0,
+          layout: 'standard',
+          title: '新页面 1',
+          bullets: [],
+          paragraphs: [],
+          speaker_notes: [],
+          image_sources: [],
+          accent_text: null,
+          elements: [],
+        });
+      }
+      currentDeck.slides = currentDeck.slides.map((item, index) => ({ ...item, order: index }));
+      currentSlideIndex = Math.max(0, Math.min(currentSlideIndex, currentDeck.slides.length - 1));
+      selectedElementId = null;
+      renderAll();
+    }
+
+    function addElement(kind) {
+      const slide = getCurrentSlide();
+      if (!slide) return;
+      const elements = ensureSlideElements(slide);
+      const baseId = `${kind}_${Date.now()}`;
+      const element = {
+        id: baseId,
+        type: kind,
+        x: kind === 'image' ? 640 : 120,
+        y: kind === 'image' ? 130 : 140,
+        w: kind === 'shape' ? 220 : 260,
+        h: kind === 'image' ? 180 : 48,
+        text: kind === 'text' ? '新文本' : null,
+        src: kind === 'image' ? '/lesson-plan-image/your-image-id' : null,
+        font_size: kind === 'text' ? 20 : null,
+        bold: false,
+        fill_color: kind === 'shape' ? '#f7f9fc' : null,
+        text_color: kind === 'text' ? '#223043' : null,
+      };
+      elements.push(element);
+      selectedElementId = element.id;
+      updateElementsTextarea(slide);
+      renderAll();
+    }
+
+    function deleteSelectedElement() {
+      const slide = getCurrentSlide();
+      if (!slide || !selectedElementId) return;
+      slide.elements = ensureSlideElements(slide).filter((item) => item.id !== selectedElementId);
+      selectedElementId = null;
+      updateElementsTextarea(slide);
+      renderAll();
+    }
+
+    deckList.addEventListener('click', async (event) => {
+      const item = event.target.closest('[data-deck-id]');
+      if (!item) return;
+      await loadDeck(item.dataset.deckId);
+    });
+
+    slideList.addEventListener('click', (event) => {
+      const item = event.target.closest('[data-slide-index]');
+      if (!item) return;
+      applyFormToCurrentSlide();
+      currentSlideIndex = Number(item.dataset.slideIndex) || 0;
+      selectedElementId = null;
+      renderAll();
+    });
+
+    document.addEventListener('mousemove', (event) => {
+      if (!dragState) return;
+      const slide = getCurrentSlide();
+      if (!slide) return;
+      const element = ensureSlideElements(slide).find((item) => item.id === dragState.elementId);
+      if (!element) return;
+      const canvas = slidePreview.querySelector('.preview-canvas');
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const pixelDeltaX = event.clientX - dragState.startX;
+      const pixelDeltaY = event.clientY - dragState.startY;
+      if (!dragState.hasMoved && dragState.mode === 'move') {
+        if (Math.abs(pixelDeltaX) < DRAG_THRESHOLD_PX && Math.abs(pixelDeltaY) < DRAG_THRESHOLD_PX) {
+          return;
+        }
+        dragState.hasMoved = true;
+        selectedElementId = element.id;
+        syncElementForm();
+      }
+      const deltaX = ((event.clientX - dragState.startX) / rect.width) * 1000;
+      const deltaY = ((event.clientY - dragState.startY) / rect.height) * 562.5;
+      if (dragState.mode === 'resize') {
+        element.w = Math.max(24, Math.min(1000 - Number(element.x || 0), dragState.originW + deltaX));
+        element.h = Math.max(24, Math.min(562.5 - Number(element.y || 0), dragState.originH + deltaY));
+      } else {
+        element.x = Math.max(0, Math.min(1000 - Number(element.w || 100), dragState.originX + deltaX));
+        element.y = Math.max(0, Math.min(562.5 - Number(element.h || 40), dragState.originY + deltaY));
+      }
+      updateElementsTextarea(slide);
+      syncElementForm();
+      renderPreview();
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (dragState?.hasMoved) {
+        suppressClickUntil = Date.now() + 120;
+      }
+      dragState = null;
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (isTypingInField) return;
+      const slide = getCurrentSlide();
+      const element = getSelectedElement();
+      if (!slide || !element) return;
+
+      const step = event.shiftKey ? 10 : 1;
+      let changed = false;
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        deleteSelectedElement();
+        return;
+      }
+      if (event.key === 'ArrowLeft') {
+        element.x = Math.max(0, Number(element.x || 0) - step);
+        changed = true;
+      } else if (event.key === 'ArrowRight') {
+        element.x = Math.min(1000 - Number(element.w || 100), Number(element.x || 0) + step);
+        changed = true;
+      } else if (event.key === 'ArrowUp') {
+        element.y = Math.max(0, Number(element.y || 0) - step);
+        changed = true;
+      } else if (event.key === 'ArrowDown') {
+        element.y = Math.min(562.5 - Number(element.h || 40), Number(element.y || 0) + step);
+        changed = true;
+      }
+      if (changed) {
+        event.preventDefault();
+        updateElementsTextarea(slide);
+        syncElementForm();
+        renderPreview();
+        return;
+      }
+    });
+
+    document.querySelectorAll('input, textarea, select').forEach((node) => {
+      node.addEventListener('focus', () => { isTypingInField = true; });
+      node.addEventListener('blur', () => { isTypingInField = false; });
+    });
+
+    [deckTitleInput, slideLayoutInput, slideTitleInput, slideAccentInput, slideBulletsInput, slideParagraphsInput, slideNotesInput, slideImagesInput, slideElementsInput]
+      .forEach(node => node.addEventListener('input', applyFormToCurrentSlide));
+    [elementTypeInput, elementFontSizeInput, elementXInput, elementYInput, elementWInput, elementHInput, elementTextInput, elementFillColorInput, elementTextColorInput, elementBoldInput]
+      .forEach(node => node.addEventListener('input', applyElementForm));
+    elementBoldInput.addEventListener('change', applyElementForm);
+
+    refreshDecksBtn.addEventListener('click', loadDecks);
+    saveDeckBtn.addEventListener('click', async () => {
+      try { await saveDeck(); alert('已保存'); } catch (error) { alert(error.message); }
+    });
+    exportDeckBtn.addEventListener('click', async () => {
+      try { await exportDeck(); } catch (error) { alert(error.message); }
+    });
+    addSlideBtn.addEventListener('click', addSlide);
+    addTextElementBtn.addEventListener('click', () => addElement('text'));
+    addShapeElementBtn.addEventListener('click', () => addElement('shape'));
+    addImageElementBtn.addEventListener('click', () => addElement('image'));
+    deleteElementBtn.addEventListener('click', deleteSelectedElement);
+    toolbarPrevBtn.addEventListener('click', () => {
+      if (!currentDeck?.slides?.length || currentSlideIndex <= 0) return;
+      applyFormToCurrentSlide();
+      currentSlideIndex -= 1;
+      selectedElementId = null;
+      renderAll();
+    });
+    toolbarNextBtn.addEventListener('click', () => {
+      if (!currentDeck?.slides?.length || currentSlideIndex >= currentDeck.slides.length - 1) return;
+      applyFormToCurrentSlide();
+      currentSlideIndex += 1;
+      selectedElementId = null;
+      renderAll();
+    });
+    toolbarAddTextBtn.addEventListener('click', () => addElement('text'));
+    toolbarAddShapeBtn.addEventListener('click', () => addElement('shape'));
+    toolbarAddImageBtn.addEventListener('click', () => addElement('image'));
+    toolbarAddSlideBtn.addEventListener('click', addSlide);
+    toolbarSaveBtn.addEventListener('click', async () => {
+      try { await saveDeck(); } catch (error) { alert(error.message); }
+    });
+    toolbarExportBtn.addEventListener('click', async () => {
+      try { await exportDeck(); } catch (error) { alert(error.message); }
+    });
+    regenElementsBtn.addEventListener('click', () => {
+      if (!currentDeck?.slides?.length) return;
+      const slide = currentDeck.slides[currentSlideIndex];
+      slide.elements = buildDefaultElements(slide);
+      selectedElementId = null;
+      renderAll();
+    });
+    moveUpBtn.addEventListener('click', () => moveSlide(-1));
+    moveDownBtn.addEventListener('click', () => moveSlide(1));
+    deleteSlideBtn.addEventListener('click', deleteSlide);
+
+    (async function init() {
+      await loadDecks();
+      const deckId = getDeckIdFromQuery();
+      if (deckId) {
+        try {
+          await loadDeck(deckId);
+          return;
+        } catch {}
+      }
+      if (decks[0]?.deck_id) {
+        await loadDeck(decks[0].deck_id);
+      }
+    })();
+  </script>
+</body>
+</html>

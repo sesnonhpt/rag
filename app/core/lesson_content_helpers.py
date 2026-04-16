@@ -144,6 +144,12 @@ def extract_image_path_from_src(src: str, image_storage: Any) -> Optional[Path]:
             return resolved
         return find_image_file_by_id(image_id)
 
+    if cleaned.startswith("/static/"):
+        static_relative = cleaned.removeprefix("/static/").strip()
+        possible_static_path = resolve_image_file_path(static_relative)
+        if possible_static_path.exists() and possible_static_path.is_file():
+            return possible_static_path
+
     possible_path = resolve_image_file_path(cleaned)
     if possible_path.exists() and possible_path.is_file():
         return possible_path

@@ -2,7 +2,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.core import lesson_content_helpers as helpers
-from app.core.lesson_content_helpers import integrate_images_into_markdown, renumber_image_references
+from app.core.lesson_content_helpers import (
+    extract_image_path_from_src,
+    integrate_images_into_markdown,
+    renumber_image_references,
+)
 from app.schemas.api_models import LessonImageResource
 
 
@@ -56,6 +60,19 @@ def test_integrate_generated_images_marks_ai_source() -> None:
     assert "**配图1：教材配图**" in output
     assert "AI 生成教学示意图" in output
     assert "AI 示意图 · gpt-image-1-mini" in output
+
+
+def test_extract_image_path_from_static_generated_image(monkeypatch, tmp_path: Path) -> None:
+    static_root = tmp_path / "app" / "static"
+    generated = static_root / "generated-images" / "20260415" / "demo.png"
+    generated.parent.mkdir(parents=True)
+    generated.write_bytes(b"png")
+
+    monkeypatch.setattr(helpers, "_ROOT", tmp_path)
+
+    resolved = extract_image_path_from_src("/static/generated-images/20260415/demo.png", image_storage=None)
+
+    assert resolved == generated
 
 
 def test_integrate_images_same_line_preserves_marker_order() -> None:

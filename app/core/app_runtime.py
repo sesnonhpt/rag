@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.paths import PROJECT_ROOT
 from app.core.runtime_helpers import build_api_error_detail
+from app.services.ppt_deck_storage import PptDeckStorage
 from src.agents import LessonHistoryStorage
 from src.core.query_engine.dense_retriever import create_dense_retriever
 from src.core.query_engine.hybrid_search import create_hybrid_search
@@ -78,6 +79,9 @@ async def lifespan(app: FastAPI):
     history_storage = LessonHistoryStorage(
         db_path=str(_ROOT / "data" / "db" / "lesson_history.db"),
     )
+    ppt_deck_storage = PptDeckStorage(
+        db_path=str(_ROOT / "data" / "db" / "ppt_decks.db"),
+    )
 
     app.state.settings = settings
     app.state.hybrid_search = hybrid_search
@@ -85,6 +89,7 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.image_storage = image_storage
     app.state.history_storage = history_storage
+    app.state.ppt_deck_storage = ppt_deck_storage
     app.state.default_collection = collection
     app.state.lesson_plan_mock_enabled = is_lesson_plan_mock_enabled()
 

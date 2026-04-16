@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 from bs4 import BeautifulSoup
 
 from app.schemas.api_models import LessonImageResource
+from app.schemas.ppt_models import LessonDeckModel, SlideElementModel
 from src.observability.logger import get_logger
 
 logger = get_logger(__name__)
@@ -32,6 +33,10 @@ class LessonSlide:
     speaker_notes: List[str] = field(default_factory=list)
     image_sources: List[str] = field(default_factory=list)
     accent_text: Optional[str] = None
+
+
+_CANVAS_W = 1000.0
+_CANVAS_H = 562.5
 
 
 @dataclass
@@ -169,6 +174,203 @@ def _allocate_fallback_images(slides: List[LessonSlide], available_image_sources
         slides[idx].image_sources.append(remaining.pop(0))
         if slides[idx].layout == "standard":
             slides[idx].layout = "two_column"
+
+
+def _hex_to_rgb(color: Optional[str], default: tuple[int, int, int]) -> tuple[int, int, int]:
+    text = str(color or "").strip().lstrip("#")
+    if len(text) != 6:
+        return default
+    try:
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+    except Exception:
+        return default
+
+
+def _estimate_text_element_height(text: str, width: float, font_size: int) -> float:
+    normalized = str(text or "")
+    safe_width = max(40.0, float(width or 100.0))
+    safe_font = max(12, int(font_size or 18))
+    chars_per_line = max(6, int(safe_width / (safe_font * 0.62)))
+    logical_lines = 0
+    for raw_line in normalized.splitlines() or [""]:
+        logical_lines += max(1, (len(raw_line) + chars_per_line - 1) // chars_per_line)
+    return max(28.0, logical_lines * safe_font * 1.35 + 10.0)
+
+
+def _normalize_text_element_bounds(element: Dict[str, Any]) -> Dict[str, Any]:
+    if str(element.get("type") or "").strip() != "text":
+        return element
+    estimated = _estimate_text_element_height(
+        str(element.get("text") or ""),
+        float(element.get("w", 100) or 100),
+        int(element.get("font_size") or 18),
+    )
+    if float(element.get("h", 0) or 0) < estimated:
+        element["h"] = estimated
+    return element
+
+
+def build_default_elements_for_slide(lesson_slide: LessonSlide) -> List[dict]:
+    bullets = lesson_slide.bullets or lesson_slide.paragraphs
+    elements: List[dict] = []
+
+    if lesson_slide.layout == "cover":
+        elements.append({
+            "id": "cover_bg",
+            "type": "shape",
+            "x": 0, "y": 0, "w": 1000, "h": 562.5,
+            "fill_color": "#f3f7fc",
+            "radius": 0,
+        })
+        elements.append({
+            "id": "cover_stripe",
+            "type": "shape",
+            "x": 70, "y": 70, "w": 16, "h": 160,
+            "fill_color": "#1d5fad",
+            "radius": 8,
+        })
+        elements.append({
+            "id": "cover_title",
+            "type": "text",
+            "x": 110, "y": 88, "w": 760, "h": 80,
+            "text": lesson_slide.title,
+            "font_size": 30,
+            "bold": True,
+            "text_color": "#1b2b47",
+        })
+        for index, item in enumerate(bullets[:3]):
+            elements.append({
+                "id": f"cover_bullet_{index}",
+                "type": "text",
+                "x": 118,
+                "y": 205 + index * 38,
+                "w": 440,
+                "h": 30,
+                "text": f"• {item}",
+                "font_size": 20,
+                "text_color": "#334765",
+            })
+        return [_normalize_text_element_bounds(dict(element)) for element in elements]
+
+    accent = "#1d5fad"
+    if lesson_slide.layout == "summary":
+        accent = "#418553"
+    elif lesson_slide.layout == "practice":
+        accent = "#bb6519"
+    elif lesson_slide.layout == "standard":
+        accent = "#4a528c"
+
+    elements.append({
+        "id": "header_bar",
+        "type": "shape",
+        "x": 0, "y": 0, "w": 1000, "h": 46,
+        "fill_color": accent,
+        "radius": 0,
+    })
+    elements.append({
+        "id": "header_title",
+        "type": "text",
+        "x": 56, "y": 10, "w": 820, "h": 28,
+        "text": lesson_slide.title,
+        "font_size": 22,
+        "bold": True,
+        "text_color": "#ffffff",
+    })
+
+    if lesson_slide.accent_text:
+        elements.append({
+            "id": "accent_text",
+            "type": "text",
+            "x": 70,
+            "y": 72,
+            "w": 760,
+            "h": 26,
+            "text": lesson_slide.accent_text,
+            "font_size": 15,
+            "bold": True,
+            "text_color": accent,
+        })
+
+    start_y = 118 if lesson_slide.accent_text else 92
+
+    if lesson_slide.layout == "two_column":
+        for index, item in enumerate(bullets[:6]):
+            elements.append({
+                "id": f"bullet_{index}",
+                "type": "text",
+                "x": 72,
+                "y": start_y + index * 46,
+                "w": 430,
+                "h": 34,
+                "text": f"• {item}",
+                "font_size": 20,
+                "text_color": "#242b36",
+            })
+        elements.append({
+            "id": "image_panel",
+            "type": "shape",
+            "x": 675, "y": 104, "w": 260, "h": 214,
+            "fill_color": "#f7f9fc",
+            "radius": 18,
+        })
+        if lesson_slide.image_sources:
+            elements.append({
+                "id": "main_image",
+                "type": "image",
+                "x": 684, "y": 112, "w": 242, "h": 194,
+                "src": lesson_slide.image_sources[0],
+            })
+        else:
+            elements.append({
+                "id": "image_hint",
+                "type": "text",
+                "x": 708, "y": 184, "w": 194, "h": 50,
+                "text": "此页适合放置示意图或案例图",
+                "font_size": 14,
+                "bold": True,
+                "text_color": "#66758a",
+            })
+    elif lesson_slide.layout == "practice":
+        for index, item in enumerate(bullets[:5]):
+            y = 98 + index * 84
+            elements.append({
+                "id": f"practice_box_{index}",
+                "type": "shape",
+                "x": 64, "y": y, "w": 870, "h": 58,
+                "fill_color": "#fcf7f0",
+                "radius": 14,
+            })
+            elements.append({
+                "id": f"practice_text_{index}",
+                "type": "text",
+                "x": 84, "y": y + 13, "w": 820, "h": 28,
+                "text": f"{index + 1}. {item}",
+                "font_size": 18,
+                "text_color": "#443621",
+            })
+    else:
+        if lesson_slide.layout == "summary":
+            elements.append({
+                "id": "summary_panel",
+                "type": "shape",
+                "x": 76, "y": 94, "w": 848, "h": 340,
+                "fill_color": "#f4faf5",
+                "radius": 18,
+            })
+        for index, item in enumerate(bullets[:6]):
+            elements.append({
+                "id": f"bullet_{index}",
+                "type": "text",
+                "x": 96,
+                "y": start_y + index * 48,
+                "w": 790,
+                "h": 34,
+                "text": f"• {item}",
+                "font_size": 20 if lesson_slide.layout == "summary" else 19,
+                "text_color": "#242b36",
+            })
+
+    return [_normalize_text_element_bounds(dict(element)) for element in elements]
 
 
 def build_lesson_deck(
@@ -390,6 +592,74 @@ def _add_picture_if_available(
         except Exception as exc:
             logger.warning("lesson_pptx.add_picture_failed src=%s path=%s error=%r", src, image_path, exc)
     return False
+
+
+def _render_elements_slide(
+    presentation: Any,
+    *,
+    title: str,
+    elements: List[SlideElementModel | Dict[str, Any]],
+    speaker_notes: List[str],
+    resolve_image_path: Callable[[str], Optional[Path]],
+) -> None:
+    imports = _get_pptx_imports()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    scale_x = 13.333 / _CANVAS_W
+    scale_y = 7.5 / _CANVAS_H
+
+    for raw in elements:
+        element = raw.model_dump() if hasattr(raw, "model_dump") else dict(raw)
+        element = _normalize_text_element_bounds(element)
+        kind = str(element.get("type") or "").strip()
+        x = imports["Inches"](float(element.get("x", 0)) * scale_x)
+        y = imports["Inches"](float(element.get("y", 0)) * scale_y)
+        w = imports["Inches"](float(element.get("w", 100)) * scale_x)
+        h = imports["Inches"](float(element.get("h", 40)) * scale_y)
+
+        if kind == "shape":
+            shape = slide.shapes.add_shape(
+                imports["MSO_AUTO_SHAPE_TYPE"].ROUNDED_RECTANGLE,
+                x, y, w, h,
+            )
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = imports["RGBColor"](*_hex_to_rgb(element.get("fill_color"), (245, 247, 251)))
+            shape.line.fill.background()
+            continue
+
+        if kind == "image":
+            src = str(element.get("src") or "").strip()
+            image_path = resolve_image_path(src)
+            if image_path and image_path.exists():
+                try:
+                    slide.shapes.add_picture(str(image_path), x, y, width=w, height=h)
+                    continue
+                except Exception as exc:
+                    logger.warning("lesson_pptx.element_image_failed src=%s error=%r", src, exc)
+            placeholder = slide.shapes.add_shape(imports["MSO_AUTO_SHAPE_TYPE"].ROUNDED_RECTANGLE, x, y, w, h)
+            placeholder.fill.solid()
+            placeholder.fill.fore_color.rgb = imports["RGBColor"](247, 249, 252)
+            placeholder.line.color.rgb = imports["RGBColor"](217, 225, 234)
+            _add_textbox(
+                slide, x, y, w, h,
+                "图片缺失",
+                font_size=12,
+                bold=True,
+                color=(102, 117, 138),
+            )
+            continue
+
+        if kind == "text":
+            _add_textbox(
+                slide,
+                x, y, w, h,
+                str(element.get("text") or ""),
+                font_size=int(element.get("font_size") or 18),
+                bold=bool(element.get("bold")),
+                color=_hex_to_rgb(element.get("text_color"), (34, 48, 67)),
+            )
+
+    _set_speaker_notes(slide, speaker_notes)
+    _add_footer(slide, title)
 
 
 def _render_cover_slide(presentation: Any, lesson_slide: LessonSlide, deck_title: str) -> None:
@@ -678,6 +948,47 @@ def build_lesson_pptx_bytes(
     presentation.slide_height = imports["Inches"](7.5)
 
     for lesson_slide in deck.slides:
+        _render_lesson_slide(
+            presentation,
+            lesson_slide,
+            deck_title=deck.title,
+            resolve_image_path=resolve_image_path,
+        )
+
+    buffer = BytesIO()
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
+def build_lesson_pptx_bytes_from_deck(
+    *,
+    deck: LessonDeckModel,
+    resolve_image_path: Callable[[str], Optional[Path]],
+) -> bytes:
+    imports = _get_pptx_imports()
+    presentation = imports["Presentation"]()
+    presentation.slide_width = imports["Inches"](13.333)
+    presentation.slide_height = imports["Inches"](7.5)
+
+    for slide_model in deck.slides:
+        if slide_model.elements:
+            _render_elements_slide(
+                presentation,
+                title=slide_model.title,
+                elements=slide_model.elements,
+                speaker_notes=list(slide_model.speaker_notes),
+                resolve_image_path=resolve_image_path,
+            )
+            continue
+        lesson_slide = LessonSlide(
+            title=slide_model.title,
+            layout=slide_model.layout,
+            bullets=list(slide_model.bullets),
+            paragraphs=list(slide_model.paragraphs),
+            speaker_notes=list(slide_model.speaker_notes),
+            image_sources=list(slide_model.image_sources),
+            accent_text=slide_model.accent_text,
+        )
         _render_lesson_slide(
             presentation,
             lesson_slide,

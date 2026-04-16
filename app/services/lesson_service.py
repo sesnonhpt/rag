@@ -112,7 +112,7 @@ def generate_lesson_plan_internal(
         image_storage=request.app.state.image_storage,
         collection=req.collection,
         enable_rerank=not fast_mode,
-        enable_image_extraction=not fast_mode,
+        enable_image_extraction=(not fast_mode) or (req.template_category == "ppt"),
         max_search_queries=2 if fast_mode else None,
     )
     writer_reviewer_agent = WriterReviewerAgent(

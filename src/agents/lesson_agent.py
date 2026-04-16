@@ -358,7 +358,8 @@ class LessonAgent:
         if forced_autonomous:
             has_usable_context = False
         effective_results = results[: max(1, max_context_results)] if has_usable_context else []
-        effective_images = state.assets.image_resources if has_usable_context else []
+        preserve_images_without_context = self.request.template_category == "ppt"
+        effective_images = state.assets.image_resources if (has_usable_context or preserve_images_without_context) else []
 
         self.trace.record_stage(
             "agent_context_relevance_check",
@@ -369,6 +370,7 @@ class LessonAgent:
                 "effective_result_count": len(effective_results),
                 "max_context_results": max(1, max_context_results),
                 "effective_image_count": len(effective_images),
+                "preserve_images_without_context": preserve_images_without_context,
             },
         )
         state.metadata["usable_context"] = has_usable_context
