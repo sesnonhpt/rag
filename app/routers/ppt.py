@@ -11,6 +11,7 @@ from app.core.runtime_helpers import build_api_error_detail
 from app.schemas.ppt_models import (
     BuildPptDeckRequest,
     CreatePptDeckRequest,
+    PptDeckCreateFromLessonResponse,
     PptDeckDeleteResponse,
     PptDeckListResponse,
     PptDeckListItem,
@@ -33,6 +34,20 @@ logger = get_logger(__name__)
 async def build_ppt_deck(req: BuildPptDeckRequest):
     deck = build_deck_from_lesson(req)
     return PptDeckResponse(deck=deck)
+
+
+@router.post("/lesson-plan/create-ppt-deck", response_model=PptDeckCreateFromLessonResponse)
+async def create_ppt_deck_from_lesson(req: BuildPptDeckRequest, request: Request):
+    storage = request.app.state.ppt_deck_storage
+    deck = build_deck_from_lesson(req)
+    storage.save_deck(deck.model_dump(mode="json"))
+    return PptDeckCreateFromLessonResponse(
+        deck_id=deck.deck_id,
+        title=deck.title,
+        topic=deck.topic,
+        template_category=deck.template_category,
+        slide_count=len(deck.slides),
+    )
 
 
 @router.get("/ppt-decks", response_model=PptDeckListResponse)

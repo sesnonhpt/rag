@@ -43,6 +43,36 @@ from src.observability.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _normalize_ppt_lesson_content(lesson_plan_content: str, topic: str) -> str:
+    text = str(lesson_plan_content or "").strip()
+    if not text:
+        return text
+
+    lines = text.splitlines()
+    desired_title = f"# 《{str(topic or '').strip() or '未命名主题'}》PPT课件"
+
+    first_heading_index = next(
+        (index for index, line in enumerate(lines) if line.lstrip().startswith("# ")),
+        None,
+    )
+    if first_heading_index is None:
+        lines.insert(0, desired_title)
+    else:
+        lines[first_heading_index] = desired_title
+
+    normalized_lines: List[str] = []
+    for index, line in enumerate(lines):
+        if index == (first_heading_index or 0):
+            normalized_lines.append(line)
+            continue
+        normalized_lines.append(
+            line.replace("综合模版(增强版)", "PPT课件")
+            .replace("综合模版", "PPT课件")
+            .replace("综合模板", "PPT课件")
+        )
+    return "\n".join(normalized_lines).strip()
+
+
 def generate_lesson_plan_internal(
     req: Any,
     request: Any,
@@ -111,6 +141,7 @@ def generate_lesson_plan_internal(
         sanitize_source_path=sanitize_source_path,
         image_storage=request.app.state.image_storage,
         collection=req.collection,
+        template_category=req.template_category,
         enable_rerank=not fast_mode,
         enable_image_extraction=(not fast_mode) or (req.template_category == "ppt"),
         max_search_queries=2 if fast_mode else None,
@@ -221,6 +252,9 @@ def generate_lesson_plan_internal(
             "lesson_agent_final_refusal_recovery",
             {"applied": True},
         )
+
+    if req.template_category == "ppt":
+        lesson_plan_content = _normalize_ppt_lesson_content(lesson_plan_content, req.topic)
 
     trace.metadata["topic"] = req.topic
     trace.metadata["collection"] = req.collection

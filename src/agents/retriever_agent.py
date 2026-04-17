@@ -27,6 +27,7 @@ class RetrieverAgent:
         sanitize_source_path: Callable[[Any], str],
         image_storage: Any,
         collection: str,
+        template_category: str | None = None,
         enable_rerank: bool = True,
         enable_image_extraction: bool = True,
         max_search_queries: int | None = None,
@@ -41,6 +42,7 @@ class RetrieverAgent:
         self.sanitize_source_path = sanitize_source_path
         self.image_storage = image_storage
         self.collection = collection
+        self.template_category = str(template_category or "").strip().lower() or None
         self.enable_rerank = enable_rerank
         self.enable_image_extraction = enable_image_extraction
         self.max_search_queries = max_search_queries
@@ -115,6 +117,24 @@ class RetrieverAgent:
                 collection=self.collection,
                 topic=topic,
             )
+            if (
+                not image_resources
+                and self.template_category == "ppt"
+                and raw_results
+            ):
+                image_resources = self.extract_image_resources(
+                    raw_results,
+                    image_storage=self.image_storage,
+                    collection=self.collection,
+                    topic=None,
+                )
+                logger.info(
+                    "lesson_retriever.images_fallback topic=%s raw_results=%s image_resources=%s collection=%s",
+                    topic,
+                    len(raw_results),
+                    len(image_resources),
+                    self.collection,
+                )
         logger.info(
             "lesson_retriever.images topic=%s enabled=%s relevant_results=%s image_resources=%s collection=%s",
             topic,

@@ -113,6 +113,14 @@ class PptDeckResponse(BaseModel):
     deck: LessonDeckModel
 
 
+class PptDeckCreateFromLessonResponse(BaseModel):
+    deck_id: str
+    title: str
+    topic: Optional[str] = None
+    template_category: str = "ppt"
+    slide_count: int = 0
+
+
 class PptDeckDeleteResponse(BaseModel):
     ok: bool = True
     deck_id: str
