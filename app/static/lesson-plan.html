@@ -1263,6 +1263,35 @@
       return text.trim();
     }
 
+    function normalizePptLessonMarkdown(markdown, topic) {
+      let text = normalizeLessonMarkdown(markdown);
+      if (!text) return text;
+
+      const safeTopic = String(topic || '').trim() || '未命名主题';
+      const desiredTitle = `# 《${safeTopic}》PPT课件`;
+      const lines = text.split('\n');
+      const firstHeadingIndex = lines.findIndex((line) => line.trim().startsWith('# '));
+
+      if (firstHeadingIndex >= 0) {
+        lines[firstHeadingIndex] = desiredTitle;
+      } else {
+        lines.unshift(desiredTitle);
+      }
+
+      return lines
+        .map((line, index) => {
+          if (index === (firstHeadingIndex >= 0 ? firstHeadingIndex : 0)) {
+            return line;
+          }
+          return line
+            .replaceAll('综合模版(增强版)', 'PPT课件')
+            .replaceAll('综合模版', 'PPT课件')
+            .replaceAll('综合模板', 'PPT课件');
+        })
+        .join('\n')
+        .trim();
+    }
+
     function normalizeTopicForMock(topic) {
       return String(topic || '')
         .replace(/\s+/g, '')
@@ -1457,6 +1486,46 @@
       imageOriginSummary.style.display = 'block';
     }
 
+    function collectRenderedLessonImages() {
+      const seen = new Set();
+      const merged = [];
+      const seedResources = Array.isArray(latestImageResources) ? latestImageResources : [];
+
+      seedResources.forEach((item, index) => {
+        const url = String(item?.url || '').trim();
+        if (!url || seen.has(url)) return;
+        seen.add(url);
+        merged.push({
+          image_id: item?.image_id || `seed_${index + 1}`,
+          url,
+          source: item?.source || url,
+          page: item?.page ?? null,
+          caption: item?.caption || null,
+          source_type: item?.source_type || (url.includes('/static/generated-images/') ? 'generated' : 'retrieved'),
+          role: item?.role || null,
+          model: item?.model || null,
+        });
+      });
+
+      Array.from(lessonContent.querySelectorAll('img')).forEach((img, index) => {
+        const src = String(img.getAttribute('src') || img.src || '').trim();
+        if (!src || seen.has(src)) return;
+        seen.add(src);
+        merged.push({
+          image_id: `rendered_${index + 1}`,
+          url: src,
+          source: src,
+          page: null,
+          caption: img.getAttribute('alt') || null,
+          source_type: src.includes('/static/generated-images/') ? 'generated' : 'retrieved',
+          role: null,
+          model: null,
+        });
+      });
+
+      return merged;
+    }
+
     async function exportCurrentLessonAsDocx() {
       const contentText = lessonContent.textContent.trim();
       if (!contentText) {
@@ -1524,6 +1593,7 @@
           body: JSON.stringify({
             title: exportTitle,
             content_html: lessonContent.innerHTML,
+            image_resources: collectRenderedLessonImages(),
           }),
         });
 
@@ -1561,7 +1631,7 @@
 
       const exportTitle = sanitizeFilename(topicInput.value || '教案课件');
       try {
-        const buildResponse = await fetch('/lesson-plan/build-ppt-deck', {
+        const createResponse = await fetch('/lesson-plan/create-ppt-deck', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1570,36 +1640,20 @@
             title: exportTitle,
             topic: topicInput.value.trim() || null,
             content_html: lessonContent.innerHTML,
-            lesson_content: lessonContent.innerText,
-            image_resources: latestImageResources,
+            image_resources: collectRenderedLessonImages(),
             template_category: 'ppt',
           }),
         });
-        if (!buildResponse.ok) {
-          throw new Error(`构建 deck 失败 (${buildResponse.status})`);
-        }
-        const built = await buildResponse.json();
-        const deck = built.deck;
-
-        const createResponse = await fetch('/ppt-decks', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            title: deck.title,
-            topic: deck.topic,
-            template_category: deck.template_category,
-            slides: deck.slides,
-            theme: deck.theme,
-            source_snapshot: deck.source_snapshot,
-          }),
-        });
         if (!createResponse.ok) {
-          throw new Error(`保存 deck 失败 (${createResponse.status})`);
+          let errorText = `创建 deck 失败 (${createResponse.status})`;
+          try {
+            const data = await createResponse.json();
+            errorText = formatApiError(data, errorText);
+          } catch {}
+          throw new Error(errorText);
         }
         const created = await createResponse.json();
-        window.location.href = `/ppt-editor.html?deck_id=${encodeURIComponent(created.deck.deck_id)}`;
+        window.location.href = `/ppt-editor.html?deck_id=${encodeURIComponent(created.deck_id)}`;
       } catch (error) {
         showError(`进入 PPT 编辑失败：${error.message}`);
       }
@@ -1837,9 +1891,14 @@
 
       // 渲染生成内容（Markdown格式）
       if (data.lesson_content) {
-        lessonContent.innerHTML = marked.parse(normalizeLessonMarkdown(data.lesson_content));
+        const activeTemplateCategory = String(data.template_category || templateCategorySelect.value || '').trim();
+        const normalizedMarkdown = activeTemplateCategory === 'ppt'
+          ? normalizePptLessonMarkdown(data.lesson_content, data.topic || topicInput.value)
+          : normalizeLessonMarkdown(data.lesson_content);
+        lessonContent.innerHTML = marked.parse(normalizedMarkdown);
         decorateLessonContent(lessonContent);
         latestImageResources = Array.isArray(data.image_resources) ? data.image_resources : [];
+        latestImageResources = collectRenderedLessonImages();
         renderImageOriginSummary(latestImageResources);
         exportDocBtn.disabled = false;
         exportPptBtn.disabled = false;
