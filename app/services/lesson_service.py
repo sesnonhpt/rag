@@ -329,7 +329,6 @@ def generate_lesson_plan_internal(
     return LessonPlanResponse(
         topic=req.topic,
         subject=subject,
-        template_category=req.template_category,
         lesson_content=lesson_plan_content,
         additional_resources=citations,
         image_resources=image_resources,
