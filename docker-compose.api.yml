@@ -1,0 +1,58 @@
+version: "3.7"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: rag-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://aihubmix.com/v1}
+      - LLM_MODEL=${LLM_MODEL:-coding-glm-5-free}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-https://aihubmix.com/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-qwen3-embedding-4b}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-2560}
+      - VISION_LLM_API_KEY=${VISION_LLM_API_KEY:-}
+      - VISION_LLM_PROVIDER=${VISION_LLM_PROVIDER:-openai}
+      - VISION_LLM_BASE_URL=${VISION_LLM_BASE_URL:-}
+      - VISION_LLM_MODEL=${VISION_LLM_MODEL:-gpt-4o}
+      - VECTOR_STORE_PROVIDER=${VECTOR_STORE_PROVIDER:-qdrant}
+      - VECTOR_STORE_PERSIST_DIRECTORY=${VECTOR_STORE_PERSIST_DIRECTORY:-./data/db/chroma}
+      - VECTOR_STORE_COLLECTION_NAME=${VECTOR_STORE_COLLECTION_NAME:-default}
+      - QDRANT_URL=${QDRANT_URL:-}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-default}
+      - QDRANT_VECTOR_DIM=${QDRANT_VECTOR_DIM:-2560}
+      - RERANK_ENABLED=${RERANK_ENABLED:-true}
+      - RERANK_PROVIDER=${RERANK_PROVIDER:-llm}
+      - RERANK_MODEL=${RERANK_MODEL:-gpt-4o-mini}
+      - RERANK_TOP_K=${RERANK_TOP_K:-10}
+      - RERANK_API_KEY=${RERANK_API_KEY:-}
+      - RERANK_BASE_URL=${RERANK_BASE_URL:-}
+      - OBSERVABILITY_TRACE_ENABLED=${OBSERVABILITY_TRACE_ENABLED:-false}
+      - LESSON_REVIEW_ENABLED=${LESSON_REVIEW_ENABLED:-false}
+      - LESSON_PLAN_REQUEST_TIMEOUT_SEC=${LESSON_PLAN_REQUEST_TIMEOUT_SEC:-120}
+      - LESSON_PLAN_STREAM_TIMEOUT_SEC=${LESSON_PLAN_STREAM_TIMEOUT_SEC:-300}
+      - OPENAI_LLM_TIMEOUT_SEC=${OPENAI_LLM_TIMEOUT_SEC:-90}
+      - LESSON_REVIEW_MODE=${LESSON_REVIEW_MODE:-light}
+      - LESSON_PLANNER_USE_LLM=${LESSON_PLANNER_USE_LLM:-true}
+      - LESSON_FAST_MODE=${LESSON_FAST_MODE:-false}
+      - LESSON_WRITER_MAX_CONTEXT_RESULTS=${LESSON_WRITER_MAX_CONTEXT_RESULTS:-10}
+      - LESSON_WEB_IMAGE_MAX_IMAGES=${LESSON_WEB_IMAGE_MAX_IMAGES:-3}
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-3}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
