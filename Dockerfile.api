@@ -5,6 +5,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Use a mainland-friendly Debian mirror to avoid slow Docker builds.
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
 # 安装系统依赖（PDF 处理；wkhtmltopdf/libgl1-mesa-glx 在 Debian Trixie 已移除）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -22,10 +28,11 @@ RUN pip install --no-cache-dir uv && \
     uv pip install --system --no-cache \
     fastapi==0.115.0 \
     uvicorn[standard]==0.30.0 \
-    chromadb==0.5.0 \
+    chromadb==1.5.5 \
     qdrant-client==1.12.0 \
     langchain-text-splitters==0.3.0 \
     markitdown[pdf]==0.1.0 \
+    pymupdf==1.26.5 \
     pydantic==2.9.0 \
     pyyaml==6.0.2 \
     openai==1.50.0 \

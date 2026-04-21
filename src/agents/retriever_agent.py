@@ -46,6 +46,10 @@ class RetrieverAgent:
         self.enable_rerank = enable_rerank
         self.enable_image_extraction = enable_image_extraction
         self.max_search_queries = max_search_queries
+        dense_vector_store = getattr(getattr(hybrid_search, "dense_retriever", None), "vector_store", None)
+        sparse_vector_store = getattr(getattr(hybrid_search, "sparse_retriever", None), "vector_store", None)
+        provider_hint = type(dense_vector_store or sparse_vector_store).__name__.lower()
+        self._collection_filters_supported = "qdrant" in provider_hint
 
     def run(self, message: AgentMessage) -> AgentMessage:
         query_plan = message.artifacts.get("query_plan") or {}
@@ -65,7 +69,11 @@ class RetrieverAgent:
             hybrid_result = self.hybrid_search.search(
                 query=search_query,
                 top_k=per_query_top_k,
-                filters=None,
+                filters=(
+                    {"collection": self.collection}
+                    if self.collection and self._collection_filters_supported
+                    else None
+                ),
                 trace=self.trace,
             )
             current_results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results

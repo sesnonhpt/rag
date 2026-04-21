@@ -144,19 +144,21 @@ class QdrantStore(BaseVectorStore):
 
     def _ensure_payload_indexes(self) -> None:
         """Ensure payload indexes exist for frequently filtered fields."""
-        try:
-            self._client.create_payload_index(
-                collection_name=self.collection_name,
-                field_name="chunk_id",
-                field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
-                wait=True,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to ensure payload index for 'chunk_id' on collection '%s': %s",
-                self.collection_name,
-                exc,
-            )
+        for field_name in ("chunk_id", "collection", "source_collection", "source_path"):
+            try:
+                self._client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=field_name,
+                    field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
+                    wait=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to ensure payload index for '%s' on collection '%s': %s",
+                    field_name,
+                    self.collection_name,
+                    exc,
+                )
 
     def _sanitize_payload(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Remove None values and coerce types that Qdrant cannot store."""
@@ -314,7 +316,7 @@ class QdrantStore(BaseVectorStore):
             for key, value in filters.items():
                 must_clauses.append(
                     qdrant_models.FieldCondition(
-                        key=f"metadata.{key}",
+                        key=key,
                         match=qdrant_models.MatchValue(value=value),
                     )
                 )
@@ -385,7 +387,7 @@ class QdrantStore(BaseVectorStore):
             raise ValueError("filter_dict cannot be empty")
         must_clauses = [
             qdrant_models.FieldCondition(
-                key=f"metadata.{k}",
+                key=k,
                 match=qdrant_models.MatchValue(v),
             )
             for k, v in filter_dict.items()

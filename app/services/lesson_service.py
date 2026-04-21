@@ -81,8 +81,16 @@ def generate_lesson_plan_internal(
     started = time.monotonic()
     state = request.app.state
     settings = state.settings
+    requested_collection = str(getattr(req, "collection", "") or "").strip() or state.default_collection
     hybrid_search = state.hybrid_search
     reranker = state.reranker
+    if requested_collection != state.default_collection:
+        # Build collection-specific retrieval components on demand so request.collection
+        # actually controls both BM25 and vector retrieval instead of always hitting
+        # the default startup collection.
+        from app.core.app_runtime import build_components
+
+        hybrid_search, reranker = build_components(settings, requested_collection)
     fast_mode = is_fast_mode_enabled()
     logger.info(
         "lesson_plan.internal_start topic=%s template_category=%s model=%s fast_mode=%s collection=%s",
@@ -90,7 +98,7 @@ def generate_lesson_plan_internal(
         req.template_category,
         req.model or state.settings.llm.model,
         fast_mode,
-        req.collection,
+        requested_collection,
     )
     if progress_callback is not None:
         progress_callback(
@@ -99,7 +107,7 @@ def generate_lesson_plan_internal(
                 "topic": req.topic,
                 "template_category": req.template_category or "comprehensive",
                 "model": req.model or state.settings.llm.model,
-                "collection": req.collection,
+                "collection": requested_collection,
             },
         )
 
@@ -140,7 +148,7 @@ def generate_lesson_plan_internal(
         extract_image_resources=extract_image_resources,
         sanitize_source_path=sanitize_source_path,
         image_storage=request.app.state.image_storage,
-        collection=req.collection,
+        collection=requested_collection,
         template_category=req.template_category,
         enable_rerank=not fast_mode,
         enable_image_extraction=(not fast_mode) or (req.template_category == "ppt"),
@@ -195,6 +203,7 @@ def generate_lesson_plan_internal(
             {
                 "elapsed_ms": (time.monotonic() - started) * 1000,
                 "topic": req.topic,
+                "collection": requested_collection,
             },
         )
     execution_plan = dict(orchestration_output["execution_plan"])
