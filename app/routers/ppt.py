@@ -30,14 +30,22 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+def _ensure_ppt_template_category(template_category: str | None) -> None:
+    if str(template_category or "").strip() == "ppt":
+        return
+    raise HTTPException(status_code=400, detail="只有 PPT 模版才能进入 PPT 预览")
+
+
 @router.post("/lesson-plan/build-ppt-deck", response_model=PptDeckResponse)
 async def build_ppt_deck(req: BuildPptDeckRequest):
+    _ensure_ppt_template_category(req.template_category)
     deck = build_deck_from_lesson(req)
     return PptDeckResponse(deck=deck)
 
 
 @router.post("/lesson-plan/create-ppt-deck", response_model=PptDeckCreateFromLessonResponse)
 async def create_ppt_deck_from_lesson(req: BuildPptDeckRequest, request: Request):
+    _ensure_ppt_template_category(req.template_category)
     storage = request.app.state.ppt_deck_storage
     deck = build_deck_from_lesson(req)
     storage.save_deck(deck.model_dump(mode="json"))
@@ -71,6 +79,7 @@ async def get_ppt_deck(deck_id: str, request: Request):
     payload = storage.get_deck(deck_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="PPT deck not found")
+    _ensure_ppt_template_category(payload.get("template_category"))
     return PptDeckResponse(deck=payload)
 
 
@@ -99,6 +108,7 @@ async def export_ppt_deck(deck_id: str, request: Request):
     payload = storage.get_deck(deck_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="PPT deck not found")
+    _ensure_ppt_template_category(payload.get("template_category"))
 
     deck = PptDeckResponse(deck=payload).deck
     try:

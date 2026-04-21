@@ -126,6 +126,8 @@ def _apply_env_overrides(data: Dict[str, Any]) -> Dict[str, Any]:
             "provider": "RERANK_PROVIDER",
             "model": "RERANK_MODEL",
             "top_k": "RERANK_TOP_K",
+            "api_key": "RERANK_API_KEY",
+            "base_url": "RERANK_BASE_URL",
         },
         "observability": {
             "log_level": "OBSERVABILITY_LOG_LEVEL",
@@ -250,6 +252,8 @@ class RerankSettings:
     provider: str
     model: str
     top_k: int
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -385,6 +389,8 @@ class Settings:
                 provider=_require_str(rerank, "provider", "rerank"),
                 model=_require_str(rerank, "model", "rerank"),
                 top_k=_require_int(rerank, "top_k", "rerank"),
+                api_key=rerank.get("api_key"),
+                base_url=rerank.get("base_url"),
             ),
             evaluation=EvaluationSettings(
                 enabled=_require_bool(evaluation, "enabled", "evaluation"),

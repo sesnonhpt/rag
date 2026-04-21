@@ -68,6 +68,7 @@ class ChatResponse(BaseModel):
 class LessonPlanResponse(BaseModel):
     topic: str
     subject: Optional[str] = None
+    template_category: Optional[str] = None
     lesson_content: Optional[str] = None
     additional_resources: List[Citation] = Field(default_factory=list)
     image_resources: List[LessonImageResource] = Field(default_factory=list)
@@ -87,6 +88,7 @@ class ExportDocxRequest(BaseModel):
 class ExportPptxRequest(BaseModel):
     title: str = Field(..., min_length=1, description="导出文件标题")
     content_html: str = Field(..., min_length=1, description="当前教案正文 HTML")
+    template_category: str = Field(default="ppt", description="当前教案模板类别")
     image_resources: List[LessonImageResource] = Field(default_factory=list, description="当前教案图片资源")
 
 

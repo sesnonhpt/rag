@@ -1063,6 +1063,7 @@
     // Frontend mock switch follows backend environment config from /client-config.
     // Local can disable mock while production keeps it enabled.
     let enableTopicTemplateMock = false;
+    let latestLessonTemplateCategory = null;
     const templateCategorySelect = document.getElementById('template-category');
     const templateDescription = document.getElementById('template-description');
     const planningIndicator = document.getElementById('planning-indicator');
@@ -1219,12 +1220,22 @@
 
     templateCategorySelect.addEventListener('change', updateTemplateDescription);
 
+    function isPptTemplateCategory(category) {
+      return String(category || '').trim() === 'ppt';
+    }
+
+    function updatePptActionState(disabled = false) {
+      const hasContent = !!lessonContent.textContent.trim();
+      const pptEnabled = hasContent && isPptTemplateCategory(latestLessonTemplateCategory);
+      exportPptBtn.disabled = disabled || !pptEnabled;
+      openPptEditorBtn.disabled = disabled || !pptEnabled;
+    }
+
     function showLoading(show) {
       loadingOverlay.style.display = show ? 'flex' : 'none';
       generateBtn.disabled = show;
       exportDocBtn.disabled = show || !lessonContent.textContent.trim();
-      exportPptBtn.disabled = show || !lessonContent.textContent.trim();
-      openPptEditorBtn.disabled = show || !lessonContent.textContent.trim();
+      updatePptActionState(show);
       if (!show && loadingText) {
         loadingText.textContent = '正在生成中';
       }
@@ -1233,16 +1244,14 @@
     function setExportLoading(show) {
       generateBtn.disabled = show;
       exportDocBtn.disabled = show || !lessonContent.textContent.trim();
-      exportPptBtn.disabled = show || !lessonContent.textContent.trim();
-      openPptEditorBtn.disabled = show || !lessonContent.textContent.trim();
+      updatePptActionState(show);
       exportDocBtn.textContent = show ? '导出中...' : exportDocBtnDefaultText;
     }
 
     function setPptExportLoading(show) {
       generateBtn.disabled = show;
       exportDocBtn.disabled = show || !lessonContent.textContent.trim();
-      exportPptBtn.disabled = show || !lessonContent.textContent.trim();
-      openPptEditorBtn.disabled = show || !lessonContent.textContent.trim();
+      updatePptActionState(show);
       exportPptBtn.textContent = show ? '导出中...' : exportPptBtnDefaultText;
     }
 
@@ -1580,6 +1589,10 @@
         showError('当前没有可导出的课件内容');
         return;
       }
+      if (!isPptTemplateCategory(latestLessonTemplateCategory)) {
+        showError('只有 PPT 模版才能导出 PPTX');
+        return;
+      }
 
       const exportTitle = sanitizeFilename(topicInput.value || '教案课件');
       setPptExportLoading(true);
@@ -1593,6 +1606,7 @@
           body: JSON.stringify({
             title: exportTitle,
             content_html: lessonContent.innerHTML,
+            template_category: latestLessonTemplateCategory || templateCategorySelect.value || '',
             image_resources: collectRenderedLessonImages(),
           }),
         });
@@ -1628,6 +1642,10 @@
         showError('当前没有可编辑的课件内容');
         return;
       }
+      if (!isPptTemplateCategory(latestLessonTemplateCategory)) {
+        showError('只有 PPT 模版才能进入 PPT 预览');
+        return;
+      }
 
       const exportTitle = sanitizeFilename(topicInput.value || '教案课件');
       try {
@@ -1641,7 +1659,7 @@
             topic: topicInput.value.trim() || null,
             content_html: lessonContent.innerHTML,
             image_resources: collectRenderedLessonImages(),
-            template_category: 'ppt',
+            template_category: latestLessonTemplateCategory || templateCategorySelect.value || '',
           }),
         });
         if (!createResponse.ok) {
@@ -1892,6 +1910,7 @@
       // 渲染生成内容（Markdown格式）
       if (data.lesson_content) {
         const activeTemplateCategory = String(data.template_category || templateCategorySelect.value || '').trim();
+        latestLessonTemplateCategory = activeTemplateCategory;
         const normalizedMarkdown = activeTemplateCategory === 'ppt'
           ? normalizePptLessonMarkdown(data.lesson_content, data.topic || topicInput.value)
           : normalizeLessonMarkdown(data.lesson_content);
@@ -1901,15 +1920,14 @@
         latestImageResources = collectRenderedLessonImages();
         renderImageOriginSummary(latestImageResources);
         exportDocBtn.disabled = false;
-        exportPptBtn.disabled = false;
-        openPptEditorBtn.disabled = false;
+        updatePptActionState(false);
       } else {
+        latestLessonTemplateCategory = null;
         lessonContent.innerHTML = '<p style="color: var(--text-light);">暂无生成内容</p>';
         latestImageResources = [];
         renderImageOriginSummary([]);
         exportDocBtn.disabled = true;
-        exportPptBtn.disabled = true;
-        openPptEditorBtn.disabled = true;
+        updatePptActionState(true);
       }
 
       // 渲染参考文档（历史详情可选择隐藏）
@@ -2115,13 +2133,13 @@
       imagePromptTypeSelect.value = 'concept_diagram';
       resultSection.style.display = 'none';
       conversationState = null;
+      latestLessonTemplateCategory = null;
       latestImageResources = [];
       localStorage.removeItem(CONVERSATION_STATE_KEY);
       planningIndicator.textContent = '';
       syncAiPromptControls();
       exportDocBtn.disabled = true;
-      exportPptBtn.disabled = true;
-      openPptEditorBtn.disabled = true;
+      updatePptActionState(true);
     }
 
     historyList.addEventListener('click', (event) => {

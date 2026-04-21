@@ -50,16 +50,22 @@ class RetrieverAgent:
         sparse_vector_store = getattr(getattr(hybrid_search, "sparse_retriever", None), "vector_store", None)
         provider_hint = type(dense_vector_store or sparse_vector_store).__name__.lower()
         self._collection_filters_supported = "qdrant" in provider_hint
+        self._query_processor = getattr(hybrid_search, "query_processor", None)
+        self._sparse_retriever = getattr(hybrid_search, "sparse_retriever", None)
 
     def run(self, message: AgentMessage) -> AgentMessage:
         query_plan = message.artifacts.get("query_plan") or {}
         topic = str(message.context.get("topic") or "")
 
-        search_queries = list(query_plan.get("search_queries") or [])
-        if not search_queries:
-            search_queries = [str(query_plan.get("user_query") or topic)]
+        search_queries = [str(item).strip() for item in (query_plan.get("search_queries") or []) if str(item).strip()]
         if self.max_search_queries is not None:
             search_queries = search_queries[: max(1, self.max_search_queries)]
+        fallback_queries = [str(query_plan.get("user_query") or "").strip(), topic.strip()]
+        for fallback_query in fallback_queries:
+            if fallback_query and fallback_query not in search_queries:
+                search_queries.append(fallback_query)
+        if not search_queries:
+            search_queries = [str(query_plan.get("user_query") or topic)]
 
         per_query_top_k = max(6, min(self.top_k, (self.top_k // max(1, len(search_queries))) + 3))
         merged_results: List[Any] = []
@@ -77,6 +83,15 @@ class RetrieverAgent:
                 trace=self.trace,
             )
             current_results = hybrid_result if not hasattr(hybrid_result, "results") else hybrid_result.results
+            if not current_results and self._query_processor is not None and self._sparse_retriever is not None:
+                processed_query = self._query_processor.process(search_query)
+                if processed_query.keywords:
+                    current_results = self._sparse_retriever.retrieve(
+                        keywords=processed_query.keywords,
+                        top_k=per_query_top_k,
+                        collection=self.collection or None,
+                        trace=self.trace,
+                    )
             for item in current_results:
                 metadata = item.metadata or {}
                 key = (

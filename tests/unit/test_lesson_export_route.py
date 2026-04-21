@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from app.routers.lesson import export_lesson_plan_docx, export_lesson_plan_pptx
-from app.routers.ppt import create_ppt_deck_from_lesson
+from app.routers.ppt import create_ppt_deck_from_lesson, get_ppt_deck
 from app.schemas.api_models import ExportDocxRequest, ExportPptxRequest
 from app.schemas.ppt_models import BuildPptDeckRequest
 from app.services.lesson_service import _normalize_ppt_lesson_content
@@ -45,7 +47,7 @@ def test_export_lesson_plan_pptx_returns_pptx_response(monkeypatch):
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(image_storage=None)))
     response = asyncio.run(
         export_lesson_plan_pptx(
-            ExportPptxRequest(title="测试 课件", content_html="<h1>标题</h1><p>内容</p>"),
+            ExportPptxRequest(title="测试 课件", content_html="<h1>标题</h1><p>内容</p>", template_category="ppt"),
             request,
         )
     )
@@ -59,6 +61,25 @@ def test_export_lesson_plan_pptx_returns_pptx_response(monkeypatch):
     assert response.headers["content-length"] == str(len(b"PPTX_BYTES"))
     assert "attachment; filename=" in response.headers["content-disposition"]
     assert "filename*=UTF-8''" in response.headers["content-disposition"]
+
+
+def test_export_lesson_plan_pptx_rejects_non_ppt_template():
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(image_storage=None)))
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(
+            export_lesson_plan_pptx(
+                ExportPptxRequest(
+                    title="测试 教案",
+                    content_html="<h1>标题</h1><p>内容</p>",
+                    template_category="guide",
+                ),
+                request,
+            )
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 400
+    assert "只有 PPT 模版" in str(getattr(exc_info.value, "detail", ""))
 
 
 def test_create_ppt_deck_from_lesson_persists_and_returns_summary(tmp_path, monkeypatch):
@@ -102,6 +123,47 @@ def test_create_ppt_deck_from_lesson_persists_and_returns_summary(tmp_path, monk
     saved = storage.get_deck("deck_test")
     assert saved is not None
     assert saved["title"] == "测试课件"
+
+
+def test_create_ppt_deck_from_lesson_rejects_non_ppt_template(tmp_path):
+    storage = PptDeckStorage(db_path=str(tmp_path / "ppt_decks.db"))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ppt_deck_storage=storage)))
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(
+            create_ppt_deck_from_lesson(
+                BuildPptDeckRequest(
+                    title="测试教案",
+                    topic="牛顿第三定律",
+                    content_html="<h1>测试</h1>",
+                    template_category="guide",
+                ),
+                request,
+            )
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 400
+    assert "只有 PPT 模版" in str(getattr(exc_info.value, "detail", ""))
+
+
+def test_get_ppt_deck_rejects_non_ppt_template(tmp_path):
+    storage = PptDeckStorage(db_path=str(tmp_path / "ppt_decks.db"))
+    storage.save_deck(
+        {
+            "deck_id": "deck_guide",
+            "title": "测试教案",
+            "topic": "牛顿第三定律",
+            "template_category": "guide",
+            "slides": [{"id": "slide_1", "title": "页1"}],
+        }
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ppt_deck_storage=storage)))
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(get_ppt_deck("deck_guide", request))
+
+    assert getattr(exc_info.value, "status_code", None) == 400
+    assert "只有 PPT 模版" in str(getattr(exc_info.value, "detail", ""))
 
 
 def test_normalize_ppt_lesson_content_rewrites_comprehensive_title():

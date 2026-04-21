@@ -55,7 +55,16 @@ class LLMReranker(BaseReranker):
         """
         self.settings = settings
         self.prompt_path = prompt_path or str(resolve_path("config/prompts/rerank.txt"))
-        self.llm = llm or LLMFactory.create(settings)
+        rerank_settings = getattr(settings, "rerank", None)
+        llm_overrides: Dict[str, Any] = {}
+        if rerank_settings is not None:
+            rerank_api_key = getattr(rerank_settings, "api_key", None)
+            rerank_base_url = getattr(rerank_settings, "base_url", None)
+            if rerank_api_key:
+                llm_overrides["api_key"] = rerank_api_key
+            if rerank_base_url:
+                llm_overrides["base_url"] = rerank_base_url
+        self.llm = llm or LLMFactory.create(settings, **llm_overrides)
         self.kwargs = kwargs
         
         # Load prompt template
@@ -242,6 +251,8 @@ class LLMReranker(BaseReranker):
         # Call LLM
         try:
             messages = [Message(role="user", content=prompt)]
+            if getattr(self.settings, "rerank", None) is not None and getattr(self.settings.rerank, "model", None):
+                kwargs.setdefault("model", self.settings.rerank.model)
             response = self.llm.chat(messages, trace=trace, **kwargs)
             response_text = response.content
         except Exception as e:

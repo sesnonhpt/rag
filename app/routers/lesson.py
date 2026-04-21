@@ -45,6 +45,20 @@ def _normalize_mock_topic(topic: str) -> str:
 def _normalize_mock_notes(notes: Optional[str]) -> str:
     return re.sub(r"\s+", "", str(notes or "")).strip()
 
+
+def _ensure_ppt_template_category(template_category: Optional[str]) -> None:
+    if str(template_category or "").strip() == "ppt":
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=build_api_error_detail(
+            code="PPT_TEMPLATE_REQUIRED",
+            message="只有 PPT 模版才支持进入 PPT 预览和导出 PPTX",
+            stage="ppt_template_guard",
+        ),
+    )
+
+
 def _load_mock_lesson_records() -> list[Dict[str, Any]]:
     if not MOCK_LESSON_DATA_FILE.exists():
         raise HTTPException(status_code=500, detail=f"mock数据文件不存在: {MOCK_LESSON_DATA_FILE.name}")
@@ -119,6 +133,7 @@ async def generate_mock_lesson_plan(req: LessonPlanRequest, request: Request):
     return LessonPlanResponse(
         topic=str(record.get("topic") or req.topic),
         subject=record.get("subject"),
+        template_category=template_category,
         lesson_content=str(record.get("lesson_content") or ""),
         additional_resources=list(record.get("additional_resources") or []),
         image_resources=[],
@@ -224,6 +239,7 @@ async def export_lesson_plan_docx(req: ExportDocxRequest, request: Request):
 
 @router.post("/lesson-plan/export-pptx")
 async def export_lesson_plan_pptx(req: ExportPptxRequest, request: Request):
+    _ensure_ppt_template_category(req.template_category)
     try:
         filename = re.sub(r'[\\/:*?"<>|]+', "_", req.title).strip() or "教案课件"
         image_storage = getattr(request.app.state, "image_storage", None)
