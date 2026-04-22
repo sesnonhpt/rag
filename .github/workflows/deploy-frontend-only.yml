@@ -1,17 +1,20 @@
-name: Deploy Full Stack
+name: Deploy Frontend Only
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend-only.yml'
 
 concurrency:
-  group: deploy-production
+  group: deploy-frontend
   cancel-in-progress: true
 
 jobs:
-  build-frontend:
+  build-and-deploy-frontend:
     runs-on: ubuntu-latest
     
     steps:
@@ -25,7 +28,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       
-      - name: Install Frontend Dependencies
+      - name: Install Dependencies
         working-directory: frontend
         run: npm ci
       
@@ -36,27 +39,13 @@ jobs:
           VITE_WS_BASE_URL: ${{ secrets.VITE_WS_BASE_URL || 'wss://your-api-domain.com' }}
         run: npm run build
       
-      - name: Upload Frontend Build
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: frontend/dist
           retention-days: 1
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-frontend
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
       
-      - name: Download Frontend Build
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-dist
-          path: frontend/dist
-
       - name: Start SSH Agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -67,7 +56,7 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.DEPLOY_PORT || '22' }}" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Sync Repository to Server
+      - name: Sync Frontend to Server
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
@@ -75,19 +64,11 @@ jobs:
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
         run: |
           rsync -az --delete \
-            --filter "P .env" \
-            --filter "P data/" \
-            --exclude ".git" \
-            --exclude ".env" \
-            --exclude ".venv" \
-            --exclude "venv" \
             --exclude "node_modules" \
-            --exclude "logs" \
-            --exclude "data" \
             -e "ssh -p ${DEPLOY_PORT:-22}" \
-            ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/"
+            ./frontend/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/frontend/"
 
-      - name: Deploy on Server
+      - name: Deploy Frontend on Server
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
@@ -99,4 +80,4 @@ jobs:
             "set -euo pipefail && \
              APP_DIR='${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}' && \
              test -d \"\$APP_DIR\" && \
-             APP_DIR=\"\$APP_DIR\" BRANCH='${DEPLOY_BRANCH:-main}' SKIP_GIT_SYNC=true bash \"\$APP_DIR/scripts/deploy_fullstack.sh\""
+             APP_DIR=\"\$APP_DIR\" BRANCH='${DEPLOY_BRANCH:-main}' SKIP_GIT_SYNC=true bash \"\$APP_DIR/scripts/deploy_frontend.sh\""

@@ -1,0 +1,61 @@
+version: '3.9'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: rag-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_PROVIDER=openai
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://aihubmix.com/v1}
+      - LLM_MODEL=${LLM_MODEL:-gemini-2.0-flash}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
+      - EMBEDDING_PROVIDER=openai
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-https://aihubmix.com/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-qwen3-embedding-4b}
+      - EMBEDDING_DIMENSIONS=2560
+      - VECTOR_STORE_PROVIDER=${VECTOR_STORE_PROVIDER:-chroma}
+      - QDRANT_URL=${QDRANT_URL}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-default}
+      - OBSERVABILITY_TRACE_ENABLED=false
+      - LESSON_PLAN_REQUEST_TIMEOUT_SEC=120
+      - LESSON_PLAN_STREAM_TIMEOUT_SEC=300
+      - OPENAI_LLM_TIMEOUT_SEC=90
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8000}
+        - VITE_WS_BASE_URL=${VITE_WS_BASE_URL:-ws://localhost:8000}
+    container_name: rag-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - NGINX_HOST=localhost
+      - NGINX_PORT=80
+    restart: unless-stopped
+
+networks:
+  default:
+    name: rag-network
