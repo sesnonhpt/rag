@@ -36,6 +36,8 @@ jobs:
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
         run: |
           rsync -az --delete \
+            --filter "P .env" \
+            --filter "P data/" \
             --exclude ".git" \
             --exclude ".env" \
             --exclude ".venv" \
