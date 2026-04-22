@@ -28,6 +28,22 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.DEPLOY_PORT || '22' }}" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Sync Repository to Server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".venv" \
+            --exclude "venv" \
+            --exclude "node_modules" \
+            --exclude "logs" \
+            -e "ssh -p ${DEPLOY_PORT:-22}" \
+            ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/"
+
       - name: Deploy on Server
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -40,4 +56,4 @@ jobs:
             "set -euo pipefail && \
              APP_DIR='${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}' && \
              test -d \"\$APP_DIR\" && \
-             APP_DIR=\"\$APP_DIR\" BRANCH='${DEPLOY_BRANCH:-main}' bash \"\$APP_DIR/scripts/deploy_api.sh\""
+             APP_DIR=\"\$APP_DIR\" BRANCH='${DEPLOY_BRANCH:-main}' SKIP_GIT_SYNC=true bash \"\$APP_DIR/scripts/deploy_api.sh\""
