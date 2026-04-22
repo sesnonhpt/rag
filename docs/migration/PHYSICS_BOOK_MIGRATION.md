@@ -173,9 +173,13 @@ python scripts/compare_collections.py "测试查询"
 | 匀速直线运动 | | | |
 
 ### 最终决策
-- **日期**: 
-- **决定**: [ ] 切换到 v4 / [ ] 保持 qwen3
+- **日期**: 2026-04-22
+- **决定**: ✅ 切换到 text-embedding-v4 (2048维)
 - **理由**: 
+  - 80% 查询表现更好（平均提升 4.4%）
+  - 存储成本降低 20%
+  - 计算效率提升 20%
+  - 详见 `EMBEDDING_COMPARISON_REPORT.md` 
 
 ## 💡 注意事项
 
