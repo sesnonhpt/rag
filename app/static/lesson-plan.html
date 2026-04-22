@@ -1006,11 +1006,11 @@
         <div class="result-card">
           <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px;">
             <h3 class="result-card-title" style="margin-bottom: 0;">生成内容</h3>
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <div id="ppt-action-group" style="display:flex; gap:10px; flex-wrap:wrap;">
               <button class="btn btn-secondary" id="open-ppt-editor-btn" type="button" disabled>进入 PPT 预览</button>
               <button class="btn btn-secondary" id="export-ppt-btn" type="button" disabled>导出 PPTX</button>
-              <button class="btn btn-primary" id="export-doc-btn" type="button" disabled>导出 DOCX</button>
             </div>
+            <button class="btn btn-primary" id="export-doc-btn" type="button" disabled>导出 DOCX</button>
           </div>
           <div class="image-origin-summary" id="image-origin-summary"></div>
           <div class="result-card-content markdown-content" id="lesson-content"></div>
@@ -1047,6 +1047,7 @@
     const exportDocBtn = document.getElementById('export-doc-btn');
     const exportPptBtn = document.getElementById('export-ppt-btn');
     const openPptEditorBtn = document.getElementById('open-ppt-editor-btn');
+    const pptActionGroup = document.getElementById('ppt-action-group');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingText = document.querySelector('.loading-text');
     const aiVisualEnabledInput = document.getElementById('ai-visual-enabled');
@@ -1227,6 +1228,9 @@
     function updatePptActionState(disabled = false) {
       const hasContent = !!lessonContent.textContent.trim();
       const pptEnabled = hasContent && isPptTemplateCategory(latestLessonTemplateCategory);
+      if (pptActionGroup) {
+        pptActionGroup.style.display = pptEnabled ? 'flex' : 'none';
+      }
       exportPptBtn.disabled = disabled || !pptEnabled;
       openPptEditorBtn.disabled = disabled || !pptEnabled;
     }

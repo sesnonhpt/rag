@@ -61,7 +61,7 @@ docker compose up --build
 
 ### 2. 配置环境变量
 
-至少需要配置：
+推荐部署默认配置是本地 `Chroma`，直接复用仓库里的 `data/db/chroma`：
 
 ```bash
 LLM_PROVIDER=openai
@@ -74,15 +74,37 @@ EMBEDDING_MODEL=qwen3-embedding-4b
 EMBEDDING_API_KEY=your_key
 EMBEDDING_BASE_URL=your_base_url
 
+VECTOR_STORE_PROVIDER=chroma
+VECTOR_STORE_PERSIST_DIRECTORY=./data/db/chroma
+VECTOR_STORE_COLLECTION_NAME=default
+
+RERANK_ENABLED=true
+RERANK_PROVIDER=llm
+RERANK_MODEL=MiniMax-M2.7-highspeed
+RERANK_API_KEY=your_minimax_key
+RERANK_BASE_URL=https://api.minimax.io/v1
+
+LESSON_REVIEW_ENABLED=true
+LESSON_REVIEW_MODE=light
+LESSON_PLANNER_USE_LLM=true
+LESSON_FAST_MODE=false
+LESSON_WRITER_MAX_CONTEXT_RESULTS=10
+LESSON_WEB_IMAGE_MAX_IMAGES=3
+UVICORN_WORKERS=3
+
+LESSON_PLAN_REQUEST_TIMEOUT_SEC=120
+LESSON_PLAN_STREAM_TIMEOUT_SEC=300
+OPENAI_LLM_TIMEOUT_SEC=90
+```
+
+如果你希望改用外部 `Qdrant`，再额外配置：
+
+```bash
 VECTOR_STORE_PROVIDER=qdrant
 QDRANT_URL=your_qdrant_url
 QDRANT_API_KEY=your_qdrant_key
 QDRANT_COLLECTION_NAME=default
 QDRANT_VECTOR_DIM=2560
-
-LESSON_PLAN_REQUEST_TIMEOUT_SEC=120
-LESSON_PLAN_STREAM_TIMEOUT_SEC=300
-OPENAI_LLM_TIMEOUT_SEC=90
 ```
 
 如果你希望 Gemini 模型走单独网关，可以额外配置：
@@ -147,17 +169,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## 部署说明
 
-项目已适配 Render 的 Docker 部署方式，配置见：
+项目当前更推荐 Docker / VPS 部署，默认走本地 `Chroma` 持久化，配置见：
 
 - [render.yaml](/Users/weng/Desktop/MODULAR-RAG-MCP-SERVER/render.yaml)
 - [Dockerfile.api](/Users/weng/Desktop/MODULAR-RAG-MCP-SERVER/Dockerfile.api)
+- [docker-compose.api.yml](/Users/weng/Desktop/MODULAR-RAG-MCP-SERVER/docker-compose.api.yml)
+- [.env.deploy.example](/Users/weng/Desktop/MODULAR-RAG-MCP-SERVER/.env.deploy.example)
 
-如果部署到 Render，请注意：
+如果按当前推荐方式部署，请注意：
 
+- `data/db/chroma` 需要随代码一起部署，这是本地向量库
 - 需要把 `data/images` 和 `data/db/image_index.db` 一起带上
-- Qdrant 只保存文本向量，不会自动保存本地图片文件
-- 线上图片 404 通常意味着图片文件或图片索引未随部署一起上传
+- 线上图片 404 通常意味着 `data/images` 或 `image_index.db` 未随部署一起上传
 - 教案流式生成建议单独配置 `LESSON_PLAN_STREAM_TIMEOUT_SEC`，并用 `OPENAI_LLM_TIMEOUT_SEC` 限制单次模型调用时长
+- 如果切到 Qdrant，只会替换向量检索层，不会替你托管本地图片文件
 
 ## 推荐模型
 

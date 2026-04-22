@@ -143,6 +143,6 @@ def build_comprehensive_master_prompt(
         Message(role="system", content=system_prompt.format(topic=topic)),
         Message(
             role="user",
-            content=f"上下文：\n{context_text}\n\n请生成主题“{topic}”的综合模版（增强版）。",
+            content=f"上下文：\n{context_text}\n\n请生成主题“{topic}”的综合模版。",
         ),
     ]

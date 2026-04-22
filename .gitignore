@@ -120,7 +120,7 @@ nonexistent_traces.jsonl/
 .agents/
 .claude/
 .kiro/
-.github/
+.github/skills/
 .vscode/
 
 data/images/physics_eval

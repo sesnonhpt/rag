@@ -13,7 +13,7 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
-docker-compose -f docker-compose.api.yml up -d --build api
+sudo docker-compose -f docker-compose.api.yml up -d --build api
 curl -fsS http://127.0.0.1:8000/health >/dev/null
 
 echo "[deploy] success"
