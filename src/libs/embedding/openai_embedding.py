@@ -149,10 +149,16 @@ class OpenAIEmbedding(BaseEmbedding):
             "model": self.model,
         }
         
-        # Add dimensions if specified (only for text-embedding-3-* models)
-        # text-embedding-ada-002 does NOT support the dimensions parameter
+        # Add dimensions if specified
+        # Support for models that accept dimensions parameter:
+        # - text-embedding-3-* (OpenAI)
+        # - text-embedding-v* (Alibaba Cloud)
         dimensions = kwargs.get("dimensions", self.dimensions)
-        if dimensions is not None and self.model.startswith("text-embedding-3"):
+        supports_dimensions = (
+            self.model.startswith("text-embedding-3") or 
+            self.model.startswith("text-embedding-v")
+        )
+        if dimensions is not None and supports_dimensions:
             api_params["dimensions"] = dimensions
         
         # Call OpenAI API

@@ -29,7 +29,7 @@ embedding:
 vision_llm:
   enabled: true
   provider: "openai"
-  model: "gpt-4o"
+  model: "gpt-4o-mini"
   # Use env var: VISION_LLM_API_KEY
   base_url: "https://aihubmix.com/v1"
   max_image_size: 2048
