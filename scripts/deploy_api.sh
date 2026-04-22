@@ -19,7 +19,8 @@ fi
 # docker-compose v1 on Ubuntu 22.04 can fail to recreate an existing container
 # with a stale ContainerConfig. Remove the old API container first to keep
 # deployments idempotent.
-sudo docker rm -f rag-api >/dev/null 2>&1 || true
+sudo docker-compose -f docker-compose.api.yml down --remove-orphans >/dev/null 2>&1 || true
+sudo docker ps -aq --filter "name=rag-api" | xargs -r sudo docker rm -f >/dev/null 2>&1 || true
 
 sudo docker-compose -f docker-compose.api.yml up -d --build api
 

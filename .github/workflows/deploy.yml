@@ -37,10 +37,12 @@ jobs:
         run: |
           rsync -az --delete \
             --exclude ".git" \
+            --exclude ".env" \
             --exclude ".venv" \
             --exclude "venv" \
             --exclude "node_modules" \
             --exclude "logs" \
+            --exclude "data" \
             -e "ssh -p ${DEPLOY_PORT:-22}" \
             ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/"
 
