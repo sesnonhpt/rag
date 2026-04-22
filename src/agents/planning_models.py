@@ -29,3 +29,4 @@ class ExecutionPlan:
     constraints: List[PlanConstraint] = field(default_factory=list)
     planner_notes: str = ""
     plan_version: str = "planner_v1"
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)  # Tool calls to execute

@@ -59,6 +59,7 @@ class LessonAgent:
         query_plan: Optional[QueryPlan] = None,
         execution_plan: Optional[ExecutionPlan] = None,
         conversation_state: Optional[ConversationState] = None,
+        tool_results: Optional[List[Any]] = None,
     ) -> LessonAgentState:
         state = LessonAgentState(
             topic=topic,
@@ -67,6 +68,7 @@ class LessonAgent:
             query_plan=query_plan,
             execution_plan=execution_plan,
             conversation_state=conversation_state,
+            tool_results=tool_results or [],
         )
 
         self._retrieve_assets(state, results, image_resources, citations)

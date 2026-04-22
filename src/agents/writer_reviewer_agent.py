@@ -43,6 +43,7 @@ class WriterReviewerAgent:
         query_plan: Any,
         execution_plan: Any,
         conversation_state: Any,
+        tool_results: Any = None,
     ) -> Dict[str, Any]:
         state = self.agent.run(
             topic=topic,
@@ -52,6 +53,7 @@ class WriterReviewerAgent:
             query_plan=query_plan,
             execution_plan=execution_plan,
             conversation_state=conversation_state,
+            tool_results=tool_results or [],
         )
         return {
             "lesson_plan_content": state.final_content or state.draft_content or "",

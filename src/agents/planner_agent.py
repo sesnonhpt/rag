@@ -10,13 +10,16 @@ from src.libs.llm.base_llm import Message
 
 from .planning_models import ExecutionPlan, PlanConstraint
 from .prompts.planner_prompts import build_planner_system_prompt, build_planner_user_payload
+from .tool_planner import ToolPlanner
 
 
 class PlannerAgent:
     """Build a structured execution plan before retrieval and writing."""
 
-    def __init__(self, llm: Optional[Any] = None) -> None:
+    def __init__(self, llm: Optional[Any] = None, tool_planner: Optional[ToolPlanner] = None, tool_planner_llm: Optional[Any] = None) -> None:
         self.llm = llm
+        # tool_planner_llm allows tool planning to use LLM independently of execution planning
+        self.tool_planner = tool_planner or ToolPlanner(llm=tool_planner_llm or llm)
 
     def plan(
         self,
@@ -24,9 +27,19 @@ class PlannerAgent:
         topic: str,
         template_category: Optional[str],
         conversation_state: Optional[Any] = None,
+        notes: Optional[str] = None,
     ) -> ExecutionPlan:
         category = template_category or "comprehensive"
         heuristic_plan = self._heuristic_plan(topic=topic, template_category=category, conversation_state=conversation_state)
+
+        # Plan tools to use (LLM-first, heuristic fallback inside ToolPlanner)
+        tool_calls = self.tool_planner.plan_tools(
+            topic=topic,
+            subject=heuristic_plan.subject_guess,
+            template_category=category,
+            notes=notes,
+        )
+        heuristic_plan.tool_calls = tool_calls
 
         if self.llm is None:
             return heuristic_plan
@@ -39,6 +52,9 @@ class PlannerAgent:
         )
         if llm_plan is None:
             return heuristic_plan
+
+        # Tool calls already decided by ToolPlanner (LLM or heuristic)
+        llm_plan.tool_calls = tool_calls
         return llm_plan
 
     def _heuristic_plan(self, *, topic: str, template_category: str, conversation_state: Optional[Any]) -> ExecutionPlan:

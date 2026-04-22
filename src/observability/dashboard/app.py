@@ -49,6 +49,11 @@ def _page_evaluation_panel() -> None:
     render()
 
 
+def _page_user_action_traces() -> None:
+    from src.observability.dashboard.pages.user_action_traces import render
+    render()
+
+
 # ── Navigation ───────────────────────────────────────────────────────
 
 pages = [
@@ -58,6 +63,7 @@ pages = [
     st.Page(_page_ingestion_traces, title="Ingestion Traces", icon="🔬"),
     st.Page(_page_query_traces, title="Query Traces", icon="🔎"),
     st.Page(_page_lesson_plan_traces, title="Lesson Plan Traces", icon="📚"),
+    st.Page(_page_user_action_traces, title="用户行为追踪", icon="🔍"),
     st.Page(_page_evaluation_panel, title="Evaluation Panel", icon="📏"),
 ]
 

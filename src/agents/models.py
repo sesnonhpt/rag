@@ -82,3 +82,4 @@ class LessonAgentState:
     execution_plan: Optional[ExecutionPlan] = None
     conversation_state: Optional[ConversationState] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    tool_results: List[Any] = field(default_factory=list)  # Results from tool execution

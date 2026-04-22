@@ -35,12 +35,31 @@ from src.agents import (
     RetrieverAgent,
     WriterReviewerAgent,
 )
+from src.agents.tools import WebSearchTool, ImageRetrievalTool, LaTeXRendererTool
+from src.agents.tools.base import ToolExecutor
 from src.core.trace import TraceContext
 from src.core.templates import TemplateManager, get_template_label_by_category
 from src.libs.llm.base_llm import Message
 from src.observability.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _build_tool_executor(request: Any) -> ToolExecutor:
+    """Build ToolExecutor with available tools, wiring image resources from app state."""
+    image_resources = []
+    try:
+        image_storage = getattr(request.app.state, "image_storage", None)
+        if image_storage and hasattr(image_storage, "list_all"):
+            image_resources = image_storage.list_all() or []
+    except Exception:
+        pass
+
+    return ToolExecutor([
+        WebSearchTool(),
+        ImageRetrievalTool(image_resources=image_resources),
+        LaTeXRendererTool(),
+    ])
 
 
 def _normalize_ppt_lesson_content(lesson_plan_content: str, topic: str) -> str:
@@ -135,7 +154,7 @@ def generate_lesson_plan_internal(
     trace = TraceContext(trace_type="lesson_plan")
     resolved_template_type = resolve_template_type_from_category(req.template_category)
     conversation_agent = ConversationAgent()
-    planner_agent = PlannerAgent(llm=llm if (not fast_mode and is_planner_llm_enabled()) else None)
+    planner_agent = PlannerAgent(llm=llm if (not fast_mode and is_planner_llm_enabled()) else None, tool_planner_llm=llm)
     query_agent = QueryAgent()
     conversation_state = conversation_agent.prepare_state(req, req.conversation_state)
     retriever_agent = RetrieverAgent(
@@ -171,6 +190,7 @@ def generate_lesson_plan_internal(
         writer_reviewer_agent=writer_reviewer_agent,
         conversation_agent=conversation_agent,
         trace=trace,
+        tool_executor=_build_tool_executor(request),
         progress_callback=progress_callback,
     )
     trace.metadata["fast_mode"] = fast_mode
@@ -191,6 +211,7 @@ def generate_lesson_plan_internal(
         topic=req.topic,
         template_category=req.template_category,
         conversation_state=conversation_state,
+        notes=req.notes,
     )
     logger.info(
         "lesson_plan.orchestration_done elapsed_ms=%.1f topic=%s",

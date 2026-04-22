@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 import time
 from typing import Any, Callable, Dict, Optional
 
 from src.observability.logger import get_logger
+from src.observability.user_action_tracker import get_tracker
 
 from .agent_protocol import AgentMessage
+from .tools.base import ToolExecutor
 
 logger = get_logger(__name__)
 
@@ -25,6 +28,7 @@ class LessonOrchestrator:
         writer_reviewer_agent: Any,
         conversation_agent: Any,
         trace: Any,
+        tool_executor: Optional[ToolExecutor] = None,
         progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         self.planner_agent = planner_agent
@@ -33,7 +37,12 @@ class LessonOrchestrator:
         self.writer_reviewer_agent = writer_reviewer_agent
         self.conversation_agent = conversation_agent
         self.trace = trace
+        self.tool_executor = tool_executor
         self.progress_callback = progress_callback
+
+        # Inject live tool schemas into ToolPlanner so LLM knows what's available
+        if tool_executor is not None and hasattr(planner_agent, "tool_planner"):
+            planner_agent.tool_planner.tool_schemas = tool_executor.get_tool_schemas()
 
     def run(
         self,
@@ -41,14 +50,29 @@ class LessonOrchestrator:
         topic: str,
         template_category: Optional[str],
         conversation_state: Any,
+        notes: Optional[str] = None,
     ) -> Dict[str, Any]:
         overall_started = time.monotonic()
+        
+        # 开始追踪用户行为
+        tracker = get_tracker()
+        action_id = tracker.start_action(
+            action_type="generate_lesson",
+            request_data={
+                "topic": topic,
+                "template_category": template_category,
+                "notes": notes,
+            },
+            session_id=getattr(conversation_state, "session_id", None),
+        )
+        
         message = AgentMessage(
             goal=f"生成主题“{topic}”的高质量教学内容",
             context={
                 "topic": topic,
                 "template_category": template_category,
                 "conversation_state": asdict(conversation_state),
+                "action_id": action_id,
             },
             constraints=[
                 {"key": "template_category", "value": template_category or "comprehensive", "source": "user"},
@@ -72,10 +96,19 @@ class LessonOrchestrator:
         )
 
         planner_started = time.monotonic()
+        
+        # 追踪 PlannerAgent 执行
+        planner_execution_id = tracker.start_agent(
+            action_id=action_id,
+            agent_name="PlannerAgent",
+            input_data={"topic": topic, "template_category": template_category},
+        )
+        
         execution_plan = self.planner_agent.plan(
             topic=topic,
             template_category=template_category,
             conversation_state=conversation_state,
+            notes=notes,
         )
         query_plan = self.query_agent.build_plan(
             topic=topic,
@@ -86,6 +119,19 @@ class LessonOrchestrator:
         message.artifacts["execution_plan"] = asdict(execution_plan)
         message.artifacts["query_plan"] = asdict(query_plan)
         message.next_action = "retrieve"
+        
+        # 完成 PlannerAgent 追踪
+        tracker.complete_agent(
+            action_id=action_id,
+            execution_id=planner_execution_id,
+            output_data={
+                "plan_version": execution_plan.plan_version,
+                "generation_mode": execution_plan.generation_mode,
+                "need_images": execution_plan.need_images,
+                "tool_calls": len(execution_plan.tool_calls),
+            },
+        )
+        
         self._record_waterfall(
             "planner_agent",
             message,
@@ -115,6 +161,68 @@ class LessonOrchestrator:
         )
 
         self.conversation_agent.apply_plan_to_state(conversation_state, message.artifacts["execution_plan"])
+
+        # Execute tools if available
+        tool_results = []
+        if self.tool_executor and execution_plan.tool_calls:
+            # Filter out deferred tools
+            immediate_tools = [
+                call for call in execution_plan.tool_calls
+                if not call.get("deferred", False)
+            ]
+            
+            if immediate_tools:
+                tool_started = time.monotonic()
+                try:
+                    tool_results = asyncio.run(
+                        self.tool_executor.execute_parallel(immediate_tools)
+                    )
+                    
+                    # 追踪每个工具执行
+                    for tool_result in tool_results:
+                        tracker.record_tool(
+                            action_id=action_id,
+                            execution_id=planner_execution_id,
+                            tool_name=tool_result.tool_name,
+                            params=immediate_tools[[t["tool_name"] for t in immediate_tools].index(tool_result.tool_name)].get("params", {}),
+                            result=tool_result.to_dict(),
+                            elapsed_ms=tool_result.elapsed_ms,
+                            status="completed" if tool_result.success else "failed",
+                            error=tool_result.error,
+                            degraded=tool_result.metadata.get("degraded", False),
+                        )
+                    
+                    self._record_waterfall(
+                        "tool_executor",
+                        message,
+                        output={
+                            "tool_count": len(tool_results),
+                            "success_count": sum(1 for r in tool_results if r.success),
+                            "tools": [r.tool_name for r in tool_results],
+                        },
+                        elapsed_ms=(time.monotonic() - tool_started) * 1000,
+                    )
+                    logger.info(
+                        "lesson_orchestrator.tools_done elapsed_ms=%.1f tool_count=%d success_count=%d",
+                        (time.monotonic() - tool_started) * 1000,
+                        len(tool_results),
+                        sum(1 for r in tool_results if r.success),
+                    )
+                    self._emit_progress(
+                        "tools_done",
+                        {
+                            "elapsed_ms": (time.monotonic() - tool_started) * 1000,
+                            "tool_count": len(tool_results),
+                            "success_count": sum(1 for r in tool_results if r.success),
+                        },
+                    )
+                except Exception as e:
+                    logger.error(
+                        "lesson_orchestrator.tools_error error=%s",
+                        str(e),
+                        exc_info=True,
+                    )
+                    # Continue without tool results (degradation)
 
         before_retrieval = message.summary()
         retriever_started = time.monotonic()
@@ -165,6 +273,7 @@ class LessonOrchestrator:
             query_plan=query_plan,
             execution_plan=execution_plan,
             conversation_state=conversation_state,
+            tool_results=tool_results,  # Pass tool results to writer
         )
         review_report = writer_output.get("review_report")
         if isinstance(review_report, dict):
@@ -210,11 +319,16 @@ class LessonOrchestrator:
         )
 
         total_elapsed_ms = (time.monotonic() - overall_started) * 1000
+        
+        # 完成用户行为追踪
+        tracker.complete_action(action_id=action_id, final_status="completed")
+        
         logger.info(
-            "lesson_orchestrator.complete elapsed_ms=%.1f topic=%s session_id=%s",
+            "lesson_orchestrator.complete elapsed_ms=%.1f topic=%s session_id=%s action_id=%s",
             total_elapsed_ms,
             topic,
             getattr(finalized_conversation, "session_id", None),
+            action_id,
         )
         self._emit_progress(
             "completed",
@@ -238,6 +352,7 @@ class LessonOrchestrator:
             "review_report": writer_output.get("review_report"),
             "review_notes": writer_output.get("review_notes") or [],
             "generation_metadata": writer_output.get("metadata") or {},
+            "tool_results": [r.to_dict() for r in tool_results],  # Include tool results in output
         }
 
     def _record_waterfall(
