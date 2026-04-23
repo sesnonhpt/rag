@@ -39,13 +39,6 @@ jobs:
           VITE_WS_BASE_URL: ${{ secrets.VITE_WS_BASE_URL || 'wss://your-api-domain.com' }}
         run: npm run build
       
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: frontend/dist
-          retention-days: 1
-      
       - name: Start SSH Agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -63,8 +56,12 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
         run: |
+          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mkdir -p '${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/frontend'"
+
           rsync -az --delete \
             --exclude "node_modules" \
+            --exclude "dist" \
             -e "ssh -p ${DEPLOY_PORT:-22}" \
             ./frontend/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/frontend/"
 
