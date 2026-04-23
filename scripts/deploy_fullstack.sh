@@ -23,6 +23,7 @@ fi
 echo "[deploy] stopping old containers..."
 sudo docker-compose -f docker-compose.fullstack.yml down --remove-orphans >/dev/null 2>&1 || true
 sudo docker ps -aq --filter "name=rag-" | xargs -r sudo docker rm -f >/dev/null 2>&1 || true
+sudo docker rm -f rag-frontend rag-backend rag-api >/dev/null 2>&1 || true
 
 # Build and start new containers
 echo "[deploy] building and starting containers..."
