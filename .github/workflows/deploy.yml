@@ -82,13 +82,22 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
         run: |
+          TEMPLATE_STAGE_DIR="${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/.deploy_templates"
+
           ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p '${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/data/templates'"
+            "mkdir -p '${TEMPLATE_STAGE_DIR}'"
 
           rsync -az --delete \
             --exclude ".DS_Store" \
             -e "ssh -p ${DEPLOY_PORT:-22}" \
-            ./data/templates/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/data/templates/"
+            ./data/templates/ "${DEPLOY_USER}@${DEPLOY_HOST}:${TEMPLATE_STAGE_DIR}/"
+
+          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "set -euo pipefail && \
+             APP_DIR='${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}' && \
+             STAGE_DIR='${TEMPLATE_STAGE_DIR}' && \
+             sudo mkdir -p \"\$APP_DIR/data/templates\" && \
+             sudo rsync -az --delete \"\$STAGE_DIR/\" \"\$APP_DIR/data/templates/\""
 
       - name: Deploy on Server
         env:
