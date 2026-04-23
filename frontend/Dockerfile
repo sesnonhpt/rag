@@ -1,7 +1,9 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM docker.m.daocloud.io/node:20-alpine AS builder
 
 WORKDIR /app
+
+RUN npm config set registry https://registry.npmmirror.com
 
 # Copy package files
 COPY package*.json ./
@@ -24,7 +26,7 @@ ENV VITE_WS_BASE_URL=${VITE_WS_BASE_URL}
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM docker.m.daocloud.io/nginx:alpine
 
 # Copy built files from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
