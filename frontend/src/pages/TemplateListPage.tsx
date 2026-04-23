@@ -22,9 +22,11 @@ export default function TemplateListPage() {
       setLoading(true)
       setError('')
       const data = await templateApi.list(search)
-      setTemplates(data.templates)
+      setTemplates(data.templates || [])
     } catch (err: any) {
+      console.error('Failed to load templates:', err)
       setError(err.message || '加载失败')
+      setTemplates([]) // Ensure templates is always an array
     } finally {
       setLoading(false)
     }
@@ -80,7 +82,7 @@ export default function TemplateListPage() {
       </div>
 
       {/* Stats */}
-      {templates.length > 0 && (
+      {templates && templates.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
           <div className="flex justify-between items-center">
             <span className="text-gray-600">共找到</span>

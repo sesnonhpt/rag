@@ -17,6 +17,20 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      '/templates': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        bypass: (req, res, options) => {
+          // Only proxy API requests, not frontend routes
+          const path = req.url || ''
+          if (path === '/templates' || path.startsWith('/templates/edit/')) {
+            // This is a frontend route, don't proxy
+            return path
+          }
+          // This is an API request, proxy it
+          return null
+        },
+      },
       '/lesson-plan-image': {
         target: 'http://localhost:8000',
         changeOrigin: true,
