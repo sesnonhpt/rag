@@ -75,6 +75,21 @@ jobs:
             -e "ssh -p ${DEPLOY_PORT:-22}" \
             ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/"
 
+      - name: Sync Template Files to Server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
+        run: |
+          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mkdir -p '${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/data/templates'"
+
+          rsync -az --delete \
+            --exclude ".DS_Store" \
+            -e "ssh -p ${DEPLOY_PORT:-22}" \
+            ./data/templates/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/data/templates/"
+
       - name: Deploy on Server
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
