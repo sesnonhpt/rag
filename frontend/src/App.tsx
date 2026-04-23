@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import LessonPage from './pages/LessonPage'
 import PPTEditorPage from './pages/PPTEditorPage'
+import TemplateListPage from './pages/TemplateListPage'
+import TemplateEditorPage from './pages/TemplateEditorPage'
 
 function App() {
   return (
@@ -11,6 +13,8 @@ function App() {
           <Route index element={<Navigate to="/lesson" replace />} />
           <Route path="lesson" element={<LessonPage />} />
           <Route path="ppt-editor" element={<PPTEditorPage />} />
+          <Route path="templates" element={<TemplateListPage />} />
+          <Route path="templates/edit/:filename" element={<TemplateEditorPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

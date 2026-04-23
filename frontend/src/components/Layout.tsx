@@ -6,6 +6,7 @@ export default function Layout() {
   const navItems = [
     { path: '/lesson', label: '智能教案' },
     { path: '/ppt-editor', label: 'PPT 编辑器' },
+    { path: '/templates', label: '模板编辑器' },
   ]
 
   return (

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>导学案模板库</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .search-box {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .template-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .template-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+            cursor: pointer;
+        }
+
+        .template-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .template-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 15px;
+            font-size: 24px;
+        }
+
+        .template-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            word-break: break-word;
+        }
+
+        .template-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 15px;
+        }
+
+        .meta-item {
+            font-size: 13px;
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .meta-icon {
+            font-size: 14px;
+        }
+
+        .download-btn {
+            width: 100%;
+            padding: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .download-btn:hover {
+            opacity: 0.9;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 18px;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .empty-state {
+            background: white;
+            border-radius: 12px;
+            padding: 60px 20px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        .empty-text {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .stats {
+            background: white;
+            border-radius: 12px;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stats-text {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .stats-count {
+            color: #667eea;
+            font-weight: 600;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📚 导学案模板库</h1>
+            <p class="subtitle">浏览和下载现有的导学案模板文件</p>
+        </div>
+
+        <div class="search-box">
+            <input 
+                type="text" 
+                class="search-input" 
+                id="searchInput" 
+                placeholder="🔍 搜索模板文件名..."
+            >
+        </div>
+
+        <div class="stats" id="stats" style="display: none;">
+            <span class="stats-text">共找到</span>
+            <span class="stats-count" id="templateCount">0</span>
+            <span class="stats-text">个模板文件</span>
+        </div>
+
+        <div id="loading" class="loading">
+            正在加载模板列表...
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="templateGrid" class="template-grid"></div>
+
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-icon">📭</div>
+            <div class="empty-text">暂无模板文件，请将文件放入 data/templates/ 目录</div>
+        </div>
+    </div>
+
+    <script>
+        let allTemplates = [];
+
+        // Get file icon based on type
+        function getFileIcon(fileType) {
+            if (fileType.includes('Word')) return '📄';
+            if (fileType.includes('PDF')) return '📕';
+            if (fileType.includes('文本')) return '📝';
+            if (fileType.includes('Markdown')) return '📋';
+            return '📎';
+        }
+
+        // Format date
+        function formatDate(timestamp) {
+            const date = new Date(parseFloat(timestamp) * 1000);
+            return date.toLocaleDateString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        // Render templates
+        function renderTemplates(templates) {
+            const grid = document.getElementById('templateGrid');
+            const stats = document.getElementById('stats');
+            const emptyState = document.getElementById('emptyState');
+            const templateCount = document.getElementById('templateCount');
+
+            if (templates.length === 0) {
+                grid.innerHTML = '';
+                stats.style.display = 'none';
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            stats.style.display = 'flex';
+            emptyState.style.display = 'none';
+            templateCount.textContent = templates.length;
+
+            grid.innerHTML = templates.map(template => `
+                <div class="template-card" onclick="downloadTemplate('${template.filename}')">
+                    <div class="template-icon">${getFileIcon(template.file_type)}</div>
+                    <div class="template-name">${template.filename}</div>
+                    <div class="template-meta">
+                        <div class="meta-item">
+                            <span class="meta-icon">📦</span>
+                            <span>${template.size_display}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-icon">📅</span>
+                            <span>${formatDate(template.modified_at)}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-icon">📋</span>
+                            <span>${template.file_type}</span>
+                        </div>
+                    </div>
+                    <button class="download-btn" onclick="event.stopPropagation(); downloadTemplate('${template.filename}')">
+                        下载模板
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        // Download template
+        function downloadTemplate(filename) {
+            window.location.href = `/templates/download/${encodeURIComponent(filename)}`;
+        }
+
+        // Search templates
+        function searchTemplates(query) {
+            const filtered = allTemplates.filter(template => 
+                template.filename.toLowerCase().includes(query.toLowerCase())
+            );
+            renderTemplates(filtered);
+        }
+
+        // Load templates
+        async function loadTemplates() {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+
+            try {
+                loading.style.display = 'block';
+                error.style.display = 'none';
+
+                const response = await fetch('/templates/list');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                allTemplates = data.templates;
+                renderTemplates(allTemplates);
+
+            } catch (err) {
+                console.error('Failed to load templates:', err);
+                error.textContent = `加载失败: ${err.message}`;
+                error.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // Setup search
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            searchTemplates(e.target.value);
+        });
+
+        // Load on page load
+        loadTemplates();
+    </script>
+</body>
+</html>

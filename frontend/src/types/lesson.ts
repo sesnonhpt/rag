@@ -30,6 +30,8 @@ export interface LessonPlanResponse {
   }>
   image_resources: LessonImageResource[]
   template_category?: string
+  subject?: string | null
+  planning_mode?: string | null
 }
 
 export interface LessonHistoryItem {
