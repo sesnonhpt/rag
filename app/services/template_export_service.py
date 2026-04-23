@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import tempfile
 from io import BytesIO
 from pathlib import Path
@@ -47,6 +48,7 @@ class TemplateExportService:
             docx_bytes = build_lesson_docx_bytes(
                 content_html=content_html,
                 resolve_image_path=resolve_image_path,
+                resolve_image_bytes=self._resolve_image_bytes,
             )
             logger.info(f"Exported to DOCX, size: {len(docx_bytes)} bytes")
             return docx_bytes
@@ -197,3 +199,22 @@ class TemplateExportService:
         
         logger.warning(f"Image not found: {src}")
         return None
+
+    def _resolve_image_bytes(self, src: str) -> Optional[bytes]:
+        """
+        Resolve embedded data URLs to raw bytes for DOCX export.
+        """
+        if not src.startswith("data:"):
+            return None
+
+        try:
+            _, encoded = src.split(",", 1)
+        except ValueError:
+            logger.warning("Invalid data URL image source")
+            return None
+
+        try:
+            return base64.b64decode(encoded)
+        except Exception as exc:
+            logger.warning("Failed to decode embedded image: %r", exc)
+            return None
