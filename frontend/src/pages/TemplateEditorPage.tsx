@@ -30,11 +30,17 @@ export default function TemplateEditorPage() {
   const [error, setError] = useState('')
   const [showPopover, setShowPopover] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 })
+  const [showContextMenu, setShowContextMenu] = useState(false)
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 })
+  const [imagePrompt, setImagePrompt] = useState('')
+  const [imageLoading, setImageLoading] = useState(false)
+  const [showImageDialog, setShowImageDialog] = useState(false)
   
   const editorRef = useRef<HTMLDivElement>(null)
   const quillRef = useRef<any>(null)
   const [quillLoaded, setQuillLoaded] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
 
   // Common prompt templates
   const commonPrompts = [
@@ -102,7 +108,8 @@ export default function TemplateEditorPage() {
         setSelectedText(text.trim())
         setSelectionRange(range)
         
-        // Calculate popover position
+        // Don't auto-show popover, wait for user to right-click
+        // Calculate popover position for later use
         const bounds = quill.getBounds(range.index, range.length)
         const editorRect = editorRef.current?.getBoundingClientRect()
         
@@ -111,13 +118,13 @@ export default function TemplateEditorPage() {
             top: bounds.top + bounds.height + 10,
             left: bounds.left
           })
-          setShowPopover(true)
         }
       } else {
         // Don't clear selection when typing in popover
-        // Only hide popover when clicking elsewhere
         if (!popoverRef.current?.contains(document.activeElement)) {
-          setShowPopover(false)
+          // Only clear if not interacting with popover
+          setSelectedText('')
+          setSelectionRange(null)
         }
       }
     })
@@ -141,13 +148,39 @@ export default function TemplateEditorPage() {
       ) {
         handleClosePopover()
       }
+      
+      // Close context menu when clicking outside
+      if (
+        showContextMenu &&
+        contextMenuRef.current &&
+        !contextMenuRef.current.contains(event.target as Node)
+      ) {
+        setShowContextMenu(false)
+      }
     }
 
     document.addEventListener('mousedown', handleClickOutside)
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showPopover])
+  }, [showPopover, showContextMenu])
+
+  // Handle right-click context menu
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      // Only handle right-click inside the editor
+      if (editorRef.current && editorRef.current.contains(e.target as Node)) {
+        e.preventDefault()
+        setContextMenuPosition({ x: e.clientX, y: e.clientY })
+        setShowContextMenu(true)
+      }
+    }
+
+    document.addEventListener('contextmenu', handleContextMenu)
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu)
+    }
+  }, [])
 
   const loadContent = async () => {
     if (!filename) return
@@ -222,6 +255,59 @@ export default function TemplateEditorPage() {
 
   const handleSelectPrompt = (prompt: string) => {
     setAiInstruction(prompt)
+  }
+
+  const handleOpenTextEnhance = () => {
+    setShowContextMenu(false)
+    if (selectedText) {
+      // Show the AI editing popover
+      setShowPopover(true)
+    } else {
+      alert('请先选择要增强的文本')
+    }
+  }
+
+  const handleOpenImageGeneration = () => {
+    setShowContextMenu(false)
+    setImagePrompt(selectedText || '')
+    setShowImageDialog(true)
+  }
+
+  const handleCloseImageDialog = () => {
+    setShowImageDialog(false)
+    setImagePrompt('')
+  }
+
+  const generateImage = async (prompt: string) => {
+    if (!quillRef.current || !prompt.trim()) return
+    
+    try {
+      setImageLoading(true)
+      
+      // TODO: Replace with your actual image generation API
+      // Example API call:
+      // const response = await axios.post('/api/generate-image', { prompt })
+      // const imageUrl = response.data.image_url
+      
+      // For demonstration, we'll use a placeholder
+      await new Promise(resolve => setTimeout(resolve, 2000)) // Simulate API call
+      
+      // Placeholder image URL (replace with actual generated image)
+      const imageUrl = `https://via.placeholder.com/400x300?text=${encodeURIComponent(prompt)}`
+      
+      // Insert image into editor at current cursor position
+      const range = quillRef.current.getSelection() || { index: 0 }
+      quillRef.current.insertEmbed(range.index, 'image', imageUrl)
+      quillRef.current.setSelection(range.index + 1)
+      
+      setShowImageDialog(false)
+      setImagePrompt('')
+      
+    } catch (err: any) {
+      alert(`图片生成失败: ${err.message}`)
+    } finally {
+      setImageLoading(false)
+    }
   }
 
   const handleExport = async (format: 'docx' | 'pdf' | 'md') => {
@@ -333,7 +419,7 @@ export default function TemplateEditorPage() {
                   </svg>
                 </button>
 
-                <h3 className="text-sm font-bold mb-3 text-gray-800">AI 编辑助手</h3>
+                <h3 className="text-sm font-bold mb-3 text-gray-800">AI 编辑</h3>
                 
                 {/* Selected Text Display */}
                 <div className="mb-3">
@@ -410,6 +496,82 @@ export default function TemplateEditorPage() {
                 )}
               </div>
             )}
+            
+            {/* Context Menu (Right-click) */}
+            {showContextMenu && (
+              <div
+                ref={contextMenuRef}
+                className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-300 py-2 min-w-[200px]"
+                style={{
+                  top: `${contextMenuPosition.y}px`,
+                  left: `${contextMenuPosition.x}px`,
+                }}
+              >
+                <button
+                  onClick={handleOpenTextEnhance}
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+                >
+                  <span className="text-lg">✨</span>
+                  <span>AI 文本编辑</span>
+                </button>
+                <button
+                  onClick={handleOpenImageGeneration}
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+                >
+                  <span className="text-lg">🎨</span>
+                  <span>AI 生图</span>
+                </button>
+              </div>
+            )}
+            
+            {/* Image Generation Dialog */}
+            {showImageDialog && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+                <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                  <h3 className="text-lg font-bold mb-4">AI 生图</h3>
+                  
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium mb-2 text-gray-700">
+                      图片描述
+                    </label>
+                    <textarea
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      rows={4}
+                      placeholder="例如：一个可爱的卡通猫咪在看书..."
+                      value={imagePrompt}
+                      onChange={(e) => setImagePrompt(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  
+                  <div className="flex gap-3">
+                    <Button
+                      className="flex-1"
+                      onClick={() => generateImage(imagePrompt)}
+                      disabled={!imagePrompt.trim() || imageLoading}
+                    >
+                      {imageLoading ? '生成中...' : '生成图片'}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={handleCloseImageDialog}
+                      disabled={imageLoading}
+                    >
+                      取消
+                    </Button>
+                  </div>
+                  
+                  {imageLoading && (
+                    <div className="mt-4 text-center text-sm text-gray-600">
+                      <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mb-2"></div>
+                      <p>正在生成图片，请稍候...</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            
             <style>{`
               /* Quill editor custom styles for better Word document rendering */
               .ql-editor {
