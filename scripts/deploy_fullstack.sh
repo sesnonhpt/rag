@@ -8,6 +8,15 @@ NGINX_SITE_SOURCE="${APP_DIR}/deploy/nginx/rag-fullstack.conf"
 NGINX_SITE_TARGET="/etc/nginx/sites-available/rag"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/rag"
 
+remove_container_if_exists() {
+  local name="$1"
+  local container_id
+  container_id="$(sudo docker ps -aq --filter "name=^/${name}$" | head -n 1 || true)"
+  if [[ -n "${container_id}" ]]; then
+    sudo docker rm -f "${container_id}" >/dev/null 2>&1 || true
+  fi
+}
+
 cd "$APP_DIR"
 
 echo "[deploy] app dir: $APP_DIR"
@@ -23,7 +32,9 @@ fi
 echo "[deploy] stopping old containers..."
 sudo docker-compose -f docker-compose.fullstack.yml down --remove-orphans >/dev/null 2>&1 || true
 sudo docker ps -aq --filter "name=rag-" | xargs -r sudo docker rm -f >/dev/null 2>&1 || true
-sudo docker rm -f rag-frontend rag-backend rag-api >/dev/null 2>&1 || true
+remove_container_if_exists rag-frontend
+remove_container_if_exists rag-backend
+remove_container_if_exists rag-api
 
 # Build and start new containers
 echo "[deploy] building and starting containers..."
