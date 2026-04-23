@@ -12,6 +12,10 @@ declare global {
   }
 }
 
+const DOWNLOAD_BASE_URL = import.meta.env.DEV
+  ? 'http://localhost:8000'
+  : (import.meta.env.VITE_API_BASE_URL || '')
+
 export default function TemplateEditorPage() {
   const { filename } = useParams<{ filename: string }>()
   const navigate = useNavigate()
@@ -234,7 +238,7 @@ export default function TemplateEditorPage() {
       const result = await templateApi.exportTemplate(filename, format)
       
       // Trigger download
-      const downloadUrl = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}${result.download_url}`
+      const downloadUrl = `${DOWNLOAD_BASE_URL}${result.download_url}`
       const link = document.createElement('a')
       link.href = downloadUrl
       link.download = ''
