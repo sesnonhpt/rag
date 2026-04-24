@@ -15,6 +15,7 @@ from app.core.paths import APP_ROOT
 from app.services.template_database import TemplateDatabase
 from app.services.file_parser_service import FileParserService
 from app.services.template_export_service import TemplateExportService
+from src.libs.llm.openai_llm import OpenAILLMError
 from src.observability.logger import get_logger
 
 router = APIRouter()
@@ -125,7 +126,7 @@ def _get_file_type(filename: str) -> str:
 @router.get("/templates/list", response_model=TemplateListResponse)
 async def list_templates(search: Optional[str] = None):
     """
-    List all template files in the templates directory.
+    List all template files in the templates directory (including subdirectories).
     
     Args:
         search: Optional search query to filter filenames
@@ -137,17 +138,25 @@ async def list_templates(search: Optional[str] = None):
         # Ensure templates directory exists
         TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
         
-        # Get all files in directory
+        # Get all files in directory (including subdirectories)
         files = []
-        for item in TEMPLATES_DIR.iterdir():
+        for item in TEMPLATES_DIR.rglob('*'):  # Use rglob for recursive search
             if item.is_file():
+                # Skip hidden files and README
+                if item.name.startswith('.') or item.name == 'README.md':
+                    continue
+                
                 # Apply search filter if provided
                 if search and search.lower() not in item.name.lower():
                     continue
                 
                 stat = item.stat()
+                # Get relative path from templates directory
+                relative_path = item.relative_to(TEMPLATES_DIR)
+                display_name = str(relative_path)  # Show path with subdirectory
+                
                 files.append(TemplateFileInfo(
-                    filename=item.name,
+                    filename=display_name,  # Use relative path as filename
                     size_bytes=stat.st_size,
                     size_display=_format_file_size(stat.st_size),
                     modified_at=str(stat.st_mtime),
@@ -157,7 +166,7 @@ async def list_templates(search: Optional[str] = None):
         # Sort by modified time (newest first)
         files.sort(key=lambda x: float(x.modified_at), reverse=True)
         
-        logger.info(f"Listed {len(files)} template files from {TEMPLATES_DIR}")
+        logger.info(f"Listed {len(files)} template files from {TEMPLATES_DIR} (including subdirectories)")
         
         return TemplateListResponse(
             templates=files,
@@ -173,27 +182,34 @@ async def list_templates(search: Optional[str] = None):
         )
 
 
-@router.get("/templates/download/{filename}")
+@router.get("/templates/download/{filename:path}")
 async def download_template(filename: str):
     """
-    Download a template file.
+    Download a template file (supports subdirectories).
     
     Args:
-        filename: Name of the file to download
+        filename: Relative path to the file (e.g., "五数下导学案/1.1 等式与方程.docx")
     
     Returns:
         FileResponse with the requested file
     """
     try:
-        # Security: prevent path traversal
-        safe_filename = Path(filename).name
-        file_path = TEMPLATES_DIR / safe_filename
+        # Security: prevent path traversal attacks
+        # Normalize the path and ensure it doesn't escape templates directory
+        safe_path = Path(filename).as_posix()
+        if '..' in safe_path or safe_path.startswith('/'):
+            raise HTTPException(
+                status_code=403,
+                detail="访问被拒绝：非法路径"
+            )
+        
+        file_path = TEMPLATES_DIR / safe_path
         
         # Check if file exists
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(
                 status_code=404,
-                detail=f"文件不存在: {safe_filename}"
+                detail=f"文件不存在: {filename}"
             )
         
         # Check if file is within templates directory (security)
@@ -203,11 +219,14 @@ async def download_template(filename: str):
                 detail="访问被拒绝"
             )
         
-        logger.info(f"Downloading template file: {safe_filename}")
+        logger.info(f"Downloading template file: {filename}")
+        
+        # Use just the filename (not path) for download
+        download_filename = Path(filename).name
         
         return FileResponse(
             path=file_path,
-            filename=safe_filename,
+            filename=download_filename,
             media_type='application/octet-stream'
         )
     
@@ -221,28 +240,34 @@ async def download_template(filename: str):
         )
 
 
-@router.get("/templates/{filename}/content", response_model=TemplateContentResponse)
+@router.get("/templates/{filename:path}/content", response_model=TemplateContentResponse)
 async def get_template_content(filename: str):
     """
-    Get template content for editing.
+    Get template content for editing (supports subdirectories).
     Parse the file and return HTML content.
     
     Args:
-        filename: Name of the file
+        filename: Relative path to the file (e.g., "五数下导学案/1.1 等式与方程.docx")
     
     Returns:
         TemplateContentResponse with HTML content
     """
     try:
-        # Security: prevent path traversal
-        safe_filename = Path(filename).name
-        file_path = TEMPLATES_DIR / safe_filename
+        # Security: prevent path traversal attacks
+        safe_path = Path(filename).as_posix()
+        if '..' in safe_path or safe_path.startswith('/'):
+            raise HTTPException(
+                status_code=403,
+                detail="访问被拒绝：非法路径"
+            )
+        
+        file_path = TEMPLATES_DIR / safe_path
         
         # Check if file exists
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(
                 status_code=404,
-                detail=f"文件不存在: {safe_filename}"
+                detail=f"文件不存在: {filename}"
             )
         
         # Check if file is within templates directory
@@ -255,11 +280,11 @@ async def get_template_content(filename: str):
         # Parse file to HTML
         parse_result = file_parser.parse_file(file_path)
         
-        logger.info(f"Retrieved template content: {safe_filename}")
+        logger.info(f"Retrieved template content: {filename}")
         
         return TemplateContentResponse(
-            template_id=safe_filename,
-            filename=safe_filename,
+            template_id=filename,
+            filename=filename,
             content_html=parse_result.html_content,
             version_id=None,
             metadata=parse_result.metadata
@@ -275,35 +300,47 @@ async def get_template_content(filename: str):
         )
 
 
-@router.put("/templates/{filename}/content")
+@router.put("/templates/{filename:path}/content")
 async def save_template_content(filename: str, request: TemplateContentRequest):
     """
-    Save edited template content (simplified - no versioning).
+    Save edited template content (simplified - no versioning, supports subdirectories).
     Content is stored in memory for export only.
     
     Args:
-        filename: Name of the file
+        filename: Relative path to the file (e.g., "五数下导学案/1.1 等式与方程.docx")
         request: Content to save
     
     Returns:
         Success response
     """
     try:
-        safe_filename = Path(filename).name
+        # Security: prevent path traversal attacks
+        safe_path = Path(filename).as_posix()
+        if '..' in safe_path or safe_path.startswith('/'):
+            raise HTTPException(
+                status_code=403,
+                detail="访问被拒绝：非法路径"
+            )
         
         # Store content in a simple in-memory cache for export
-        # In a real app, you might want to use Redis or similar
-        import tempfile
+        # Use a hash of the full path to avoid directory issues in cache
+        import hashlib
+        cache_key = hashlib.md5(filename.encode()).hexdigest()
+        
         cache_dir = Path(tempfile.gettempdir()) / "template_cache"
         cache_dir.mkdir(exist_ok=True)
-        cache_file = cache_dir / f"{safe_filename}.html"
+        cache_file = cache_dir / f"{cache_key}.html"
         cache_file.write_text(request.content_html, encoding='utf-8')
         
-        logger.info(f"Saved template content to cache: {safe_filename}")
+        # Also store the original filename mapping
+        mapping_file = cache_dir / f"{cache_key}.mapping"
+        mapping_file.write_text(filename, encoding='utf-8')
+        
+        logger.info(f"Saved template content to cache: {filename}")
         
         return {
             "success": True,
-            "template_id": safe_filename,
+            "template_id": filename,
             "message": "内容已缓存，可以导出"
         }
     
@@ -365,6 +402,23 @@ async def ai_modify_content(request: AIModifyRequest, req: Request):
             processing_time_ms=processing_time
         )
     
+    except OpenAILLMError as e:
+        logger.exception("AI modification failed")
+        message = str(e)
+        if "HTTP 429" in message or "rate limited" in message.lower():
+            raise HTTPException(
+                status_code=429,
+                detail="AI 修改暂时过载，请稍后重试或切换可用模型",
+            )
+        if "HTTP 404" in message or "no longer available" in message.lower():
+            raise HTTPException(
+                status_code=503,
+                detail="AI 修改当前使用的模型已不可用，请更新模型配置后重试",
+            )
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI 修改失败: {message}",
+        )
     except Exception as e:
         logger.exception("AI modification failed")
         raise HTTPException(
@@ -374,14 +428,14 @@ async def ai_modify_content(request: AIModifyRequest, req: Request):
 
 
 
-@router.post("/templates/{filename}/export", response_model=ExportResponse)
+@router.post("/templates/{filename:path}/export", response_model=ExportResponse)
 async def export_template(filename: str, request: ExportRequest):
     """
-    Export template to specified format.
+    Export template to specified format (supports subdirectories).
     Uses cached edited content if available, otherwise parses original file.
     
     Args:
-        filename: Name of the file
+        filename: Relative path to the file (e.g., "五数下导学案/1.1 等式与方程.docx")
         request: Export format (docx/pdf/md)
     
     Returns:
@@ -389,29 +443,37 @@ async def export_template(filename: str, request: ExportRequest):
     """
     import tempfile
     import uuid
+    import hashlib
     from fastapi.responses import FileResponse
     
     try:
-        safe_filename = Path(filename).name
+        # Security: prevent path traversal attacks
+        safe_path = Path(filename).as_posix()
+        if '..' in safe_path or safe_path.startswith('/'):
+            raise HTTPException(
+                status_code=403,
+                detail="访问被拒绝：非法路径"
+            )
         
         # Try to get cached edited content first
         cache_dir = Path(tempfile.gettempdir()) / "template_cache"
-        cache_file = cache_dir / f"{safe_filename}.html"
+        cache_key = hashlib.md5(filename.encode()).hexdigest()
+        cache_file = cache_dir / f"{cache_key}.html"
         
         if cache_file.exists():
             content_html = cache_file.read_text(encoding='utf-8')
-            logger.info(f"Using cached content for export: {safe_filename}")
+            logger.info(f"Using cached content for export: {filename}")
         else:
             # Parse original file
-            file_path = TEMPLATES_DIR / safe_filename
+            file_path = TEMPLATES_DIR / safe_path
             if not file_path.exists():
                 raise HTTPException(
                     status_code=404,
-                    detail=f"文件不存在: {safe_filename}"
+                    detail=f"文件不存在: {filename}"
                 )
             parse_result = file_parser.parse_file(file_path)
             content_html = parse_result.html_content
-            logger.info(f"Using original parsed content for export: {safe_filename}")
+            logger.info(f"Using original parsed content for export: {filename}")
         
         # Export based on format
         export_format = request.format.lower()
@@ -439,9 +501,9 @@ async def export_template(filename: str, request: ExportRequest):
         temp_dir = Path(tempfile.gettempdir()) / "template_exports"
         temp_dir.mkdir(exist_ok=True)
         
-        # Generate unique filename
+        # Generate unique filename (use just the base filename, not the path)
         export_id = str(uuid.uuid4())[:8]
-        base_name = Path(safe_filename).stem
+        base_name = Path(filename).stem
         export_filename = f"{base_name}_{export_id}.{file_ext}"
         export_path = temp_dir / export_filename
         
@@ -451,7 +513,7 @@ async def export_template(filename: str, request: ExportRequest):
         else:
             export_path.write_text(export_bytes)
         
-        logger.info(f"Exported template {safe_filename} to {export_format}, size: {len(export_bytes)} bytes")
+        logger.info(f"Exported template {filename} to {export_format}, size: {len(export_bytes)} bytes")
         
         # Return download URL (relative path)
         download_url = f"/templates/download-export/{export_filename}"

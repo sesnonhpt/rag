@@ -6,12 +6,17 @@ import Loading from '@/components/ui/Loading'
 import { templateApi } from '@/api/template'
 import type { TemplateFileInfo } from '@/types/template'
 
+interface GroupedTemplates {
+  [folder: string]: TemplateFileInfo[]
+}
+
 export default function TemplateListPage() {
   const navigate = useNavigate()
   const [templates, setTemplates] = useState<TemplateFileInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['根目录']))
 
   useEffect(() => {
     loadTemplates()
@@ -32,12 +37,45 @@ export default function TemplateListPage() {
     }
   }
 
+  // Group templates by folder
+  const groupedTemplates: GroupedTemplates = templates.reduce((acc, template) => {
+    const parts = template.filename.split('/')
+    const folder = parts.length > 1 ? parts[0] : '根目录'
+    
+    if (!acc[folder]) {
+      acc[folder] = []
+    }
+    acc[folder].push(template)
+    return acc
+  }, {} as GroupedTemplates)
+
+  const toggleFolder = (folder: string) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      if (next.has(folder)) {
+        next.delete(folder)
+      } else {
+        next.add(folder)
+      }
+      return next
+    })
+  }
+
+  const getFileName = (fullPath: string) => {
+    const parts = fullPath.split('/')
+    return parts[parts.length - 1]
+  }
+
   const handleEdit = (filename: string) => {
-    navigate(`/templates/edit/${encodeURIComponent(filename)}`)
+    // Encode each path segment separately to preserve subdirectory structure
+    const encodedPath = filename.split('/').map(segment => encodeURIComponent(segment)).join('/')
+    navigate(`/templates/edit/${encodedPath}`)
   }
 
   const handleDownload = (filename: string) => {
-    window.location.href = `/templates/download/${encodeURIComponent(filename)}`
+    // Encode each path segment separately to preserve subdirectory structure
+    const encodedPath = filename.split('/').map(segment => encodeURIComponent(segment)).join('/')
+    window.location.href = `/templates/download/${encodedPath}`
   }
 
   const getFileIcon = (fileType: string) => {
@@ -99,60 +137,100 @@ export default function TemplateListPage() {
         </div>
       )}
 
-      {/* Template Grid */}
+      {/* Template Grid by Folder */}
       {templates.length === 0 && !loading ? (
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
           <div className="text-6xl mb-4 opacity-30">📭</div>
           <p className="text-gray-600">暂无模板文件，请将文件放入 data/templates/ 目录</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {templates.map((template) => (
-            <div
-              key={template.filename}
-              className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition-shadow"
-            >
-              <div className="flex items-start gap-4 mb-4">
-                <div className="text-4xl">{getFileIcon(template.file_type)}</div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-gray-900 mb-1 truncate">
-                    {template.filename}
-                  </h3>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <span>📦</span>
-                      <span>{template.size_display}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <span>📅</span>
-                      <span>{formatDate(template.modified_at)}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <span>📋</span>
-                      <span>{template.file_type}</span>
+        <div className="space-y-6">
+          {Object.entries(groupedTemplates).sort(([a], [b]) => {
+            // 根目录排在最前面
+            if (a === '根目录') return -1
+            if (b === '根目录') return 1
+            return a.localeCompare(b, 'zh-CN')
+          }).map(([folder, folderTemplates]) => {
+            const isExpanded = expandedFolders.has(folder)
+            
+            return (
+              <div key={folder} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                {/* Folder Header */}
+                <div
+                  className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors"
+                  onClick={() => toggleFolder(folder)}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">
+                      {isExpanded ? '📂' : '📁'}
+                    </span>
+                    <div>
+                      <h3 className="font-bold text-gray-900">{folder}</h3>
+                      <p className="text-sm text-gray-600">{folderTemplates.length} 个文件</p>
                     </div>
                   </div>
+                  <button className="text-gray-500 hover:text-gray-700">
+                    <svg
+                      className={`w-6 h-6 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
                 </div>
-              </div>
 
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => handleEdit(template.filename)}
-                >
-                  编辑
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => handleDownload(template.filename)}
-                >
-                  下载
-                </Button>
+                {/* Folder Content */}
+                {isExpanded && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+                    {folderTemplates.map((template) => (
+                      <div
+                        key={template.filename}
+                        className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-lg transition-shadow"
+                      >
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="text-3xl">{getFileIcon(template.file_type)}</div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-gray-900 mb-1 truncate text-sm">
+                              {getFileName(template.filename)}
+                            </h4>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 text-xs text-gray-600">
+                                <span>📦</span>
+                                <span>{template.size_display}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-gray-600">
+                                <span>📅</span>
+                                <span>{formatDate(template.modified_at)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => handleEdit(template.filename)}
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleDownload(template.filename)}
+                          >
+                            下载
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

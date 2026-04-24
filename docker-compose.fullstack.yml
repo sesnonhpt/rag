@@ -13,7 +13,7 @@ services:
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_PROVIDER=openai
       - LLM_BASE_URL=${LLM_BASE_URL:-https://aihubmix.com/v1}
-      - LLM_MODEL=${LLM_MODEL:-gemini-2.0-flash}
+      - LLM_MODEL=${LLM_MODEL:-coding-glm-5-free}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
       - EMBEDDING_PROVIDER=openai
       - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-https://aihubmix.com/v1}
