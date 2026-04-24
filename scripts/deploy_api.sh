@@ -4,6 +4,13 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/home/ubuntu/apps/rag}"
 BRANCH="${BRANCH:-main}"
 SKIP_GIT_SYNC="${SKIP_GIT_SYNC:-false}"
+IMAGE_PRUNE_UNTIL="${IMAGE_PRUNE_UNTIL:-24h}"
+
+cleanup_docker_artifacts() {
+  echo "[deploy] pruning unused docker images older than ${IMAGE_PRUNE_UNTIL}..."
+  sudo docker image prune -af --filter "until=${IMAGE_PRUNE_UNTIL}" >/dev/null 2>&1 || true
+  sudo docker builder prune -af --filter "until=${IMAGE_PRUNE_UNTIL}" >/dev/null 2>&1 || true
+}
 
 cd "$APP_DIR"
 
@@ -26,6 +33,7 @@ sudo docker-compose -f docker-compose.api.yml up -d --build api
 
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+    cleanup_docker_artifacts
     echo "[deploy] success"
     exit 0
   fi

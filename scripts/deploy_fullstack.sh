@@ -7,6 +7,7 @@ SKIP_GIT_SYNC="${SKIP_GIT_SYNC:-false}"
 NGINX_SITE_SOURCE="${APP_DIR}/deploy/nginx/rag-fullstack.conf"
 NGINX_SITE_TARGET="/etc/nginx/sites-available/rag"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/rag"
+IMAGE_PRUNE_UNTIL="${IMAGE_PRUNE_UNTIL:-24h}"
 
 remove_container_if_exists() {
   local name="$1"
@@ -15,6 +16,12 @@ remove_container_if_exists() {
   if [[ -n "${container_id}" ]]; then
     sudo docker rm -f "${container_id}" >/dev/null 2>&1 || true
   fi
+}
+
+cleanup_docker_artifacts() {
+  echo "[deploy] pruning unused docker images older than ${IMAGE_PRUNE_UNTIL}..."
+  sudo docker image prune -af --filter "until=${IMAGE_PRUNE_UNTIL}" >/dev/null 2>&1 || true
+  sudo docker builder prune -af --filter "until=${IMAGE_PRUNE_UNTIL}" >/dev/null 2>&1 || true
 }
 
 cd "$APP_DIR"
@@ -95,6 +102,8 @@ for i in $(seq 1 30); do
   fi
   sleep 2
 done
+
+cleanup_docker_artifacts
 
 echo "[deploy] full stack deployment successful"
 exit 0
