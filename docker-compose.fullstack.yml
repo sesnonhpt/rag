@@ -14,6 +14,9 @@ services:
       - LLM_PROVIDER=openai
       - LLM_BASE_URL=${LLM_BASE_URL:-https://aihubmix.com/v1}
       - LLM_MODEL=${LLM_MODEL:-coding-glm-5-free}
+      - LLM_FALLBACK_API_KEY=${LLM_FALLBACK_API_KEY:-}
+      - LLM_FALLBACK_BASE_URL=${LLM_FALLBACK_BASE_URL:-}
+      - LLM_FALLBACK_MODEL=${LLM_FALLBACK_MODEL:-}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
       - EMBEDDING_PROVIDER=openai
       - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-https://aihubmix.com/v1}

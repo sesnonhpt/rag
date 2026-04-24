@@ -80,6 +80,11 @@ class OpenAILLM(BaseLLM):
                 "OpenAI API key not provided. Set in settings.yaml (llm.api_key), "
                 "OPENAI_API_KEY environment variable, or pass api_key parameter."
             )
+
+        # Optional fallback model for provider rate limits / model retirement.
+        self.fallback_model = os.environ.get("LLM_FALLBACK_MODEL") or None
+        self.fallback_api_key = os.environ.get("LLM_FALLBACK_API_KEY") or self.api_key
+        self.fallback_base_url = os.environ.get("LLM_FALLBACK_BASE_URL") or None
         
         # Azure-compatible mode detection
         azure_endpoint = getattr(settings.llm, 'azure_endpoint', None)
@@ -143,6 +148,19 @@ class OpenAILLM(BaseLLM):
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
+        except OpenAILLMError as e:
+            if self._should_retry_with_fallback(e, model):
+                fallback_model = self.fallback_model or model
+                response_data = self._call_api(
+                    messages=api_messages,
+                    model=fallback_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    api_key=self.fallback_api_key,
+                    base_url=self.fallback_base_url,
+                )
+            else:
+                raise
             
             # Parse response
             content = response_data["choices"][0]["message"]["content"]
@@ -171,6 +189,8 @@ class OpenAILLM(BaseLLM):
         model: str,
         temperature: float,
         max_tokens: int,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Make the actual API call to OpenAI.
         
@@ -190,18 +210,21 @@ class OpenAILLM(BaseLLM):
         """
         import httpx
         
-        url = f"{self.base_url.rstrip('/')}/chat/completions"
+        effective_base_url = base_url or self.base_url
+        effective_api_key = api_key or self.api_key
+
+        url = f"{effective_base_url.rstrip('/')}/chat/completions"
         if self.api_version:
             url += f"?api-version={self.api_version}"
         
         if self._use_azure_auth:
             headers = {
-                "api-key": self.api_key,
+                "api-key": effective_api_key,
                 "Content-Type": "application/json",
             }
         else:
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {effective_api_key}",
                 "Content-Type": "application/json",
             }
         payload = {
@@ -230,6 +253,18 @@ class OpenAILLM(BaseLLM):
             raise OpenAILLMError(
                 f"[OpenAI] Connection failed: {type(e).__name__}: {e}"
             ) from e
+
+    def _should_retry_with_fallback(self, error: OpenAILLMError, model: str) -> bool:
+        if not self.fallback_model or self.fallback_model == model:
+            return False
+
+        message = str(error).lower()
+        return (
+            "http 429" in message
+            or "rate limited" in message
+            or "no longer available" in message
+            or "http 404" in message
+        )
     
     def _parse_error_response(self, response: Any) -> str:
         """Parse error details from API response.
