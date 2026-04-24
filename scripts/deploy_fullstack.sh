@@ -18,6 +18,13 @@ remove_container_if_exists() {
   fi
 }
 
+remove_image_if_exists() {
+  local image_ref="$1"
+  if sudo docker image inspect "$image_ref" >/dev/null 2>&1; then
+    sudo docker image rm -f "$image_ref" >/dev/null 2>&1 || true
+  fi
+}
+
 cleanup_docker_artifacts() {
   echo "[deploy] pruning unused docker images older than ${IMAGE_PRUNE_UNTIL}..."
   sudo docker image prune -af --filter "until=${IMAGE_PRUNE_UNTIL}" >/dev/null 2>&1 || true
@@ -47,6 +54,8 @@ sudo docker ps -aq --filter "name=rag-" | xargs -r sudo docker rm -f >/dev/null 
 remove_container_if_exists rag-frontend
 remove_container_if_exists rag-backend
 remove_container_if_exists rag-api
+remove_image_if_exists rag_frontend:latest
+remove_image_if_exists rag_backend:latest
 
 # Build and start new containers
 echo "[deploy] building and starting containers..."
