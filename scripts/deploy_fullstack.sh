@@ -22,6 +22,11 @@ cd "$APP_DIR"
 echo "[deploy] app dir: $APP_DIR"
 echo "[deploy] branch: $BRANCH"
 
+# Ensure data directory has correct permissions
+echo "[deploy] ensuring data directory permissions..."
+sudo mkdir -p "$APP_DIR/data/templates"
+sudo chown -R "$(id -u):$(id -g)" "$APP_DIR/data"
+
 if [[ "$SKIP_GIT_SYNC" != "true" ]]; then
   git fetch origin "$BRANCH"
   git checkout "$BRANCH"

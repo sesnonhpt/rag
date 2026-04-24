@@ -82,22 +82,17 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
         run: |
-          TEMPLATE_STAGE_DIR="${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/.deploy_templates"
-
+          APP_DIR="${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}"
+          
+          # Ensure templates directory exists with correct permissions
           ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p '${TEMPLATE_STAGE_DIR}'"
-
+            "mkdir -p '${APP_DIR}/data/templates'"
+          
+          # Sync templates directly to app directory
           rsync -az --delete \
             --exclude ".DS_Store" \
             -e "ssh -p ${DEPLOY_PORT:-22}" \
-            ./data/templates/ "${DEPLOY_USER}@${DEPLOY_HOST}:${TEMPLATE_STAGE_DIR}/"
-
-          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "set -euo pipefail && \
-             APP_DIR='${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}' && \
-             STAGE_DIR='${TEMPLATE_STAGE_DIR}' && \
-             sudo mkdir -p \"\$APP_DIR/data/templates\" && \
-             sudo rsync -az --delete \"\$STAGE_DIR/\" \"\$APP_DIR/data/templates/\""
+            ./data/templates/ "${DEPLOY_USER}@${DEPLOY_HOST}:${APP_DIR}/data/templates/"
 
       - name: Deploy on Server
         env:
