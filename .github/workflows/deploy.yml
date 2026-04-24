@@ -63,36 +63,19 @@ jobs:
         run: |
           rsync -az --delete \
             --filter "P .env" \
-            --filter "P data/" \
+            --filter "P data/db/" \
+            --filter "P data/images/" \
             --exclude ".git" \
             --exclude ".env" \
             --exclude ".venv" \
             --exclude "venv" \
             --exclude "node_modules" \
             --exclude "logs" \
-            --exclude "data" \
+            --exclude "data/db" \
+            --exclude "data/images" \
             --exclude "frontend/dist" \
             -e "ssh -p ${DEPLOY_PORT:-22}" \
             ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/"
-
-      - name: Sync Template Files to Server
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
-        run: |
-          APP_DIR="${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}"
-          
-          # Ensure templates directory exists with correct permissions
-          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p '${APP_DIR}/data/templates'"
-          
-          # Sync templates directly to app directory
-          rsync -az --delete \
-            --exclude ".DS_Store" \
-            -e "ssh -p ${DEPLOY_PORT:-22}" \
-            ./data/templates/ "${DEPLOY_USER}@${DEPLOY_HOST}:${APP_DIR}/data/templates/"
 
       - name: Deploy on Server
         env:
