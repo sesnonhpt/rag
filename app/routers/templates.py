@@ -15,6 +15,7 @@ from app.core.paths import APP_ROOT
 from app.services.template_database import TemplateDatabase
 from app.services.file_parser_service import FileParserService
 from app.services.template_export_service import TemplateExportService
+from app.services.template_metadata_service import TemplateMetadataService
 from src.libs.llm.openai_llm import OpenAILLMError
 from src.observability.logger import get_logger
 
@@ -29,6 +30,7 @@ DB_PATH = APP_ROOT.parent / "data" / "db" / "template_index.db"
 template_db = TemplateDatabase(str(DB_PATH))
 file_parser = FileParserService()
 export_service = TemplateExportService()
+metadata_service = TemplateMetadataService(TEMPLATES_DIR)
 
 
 class TemplateFileInfo(BaseModel):
@@ -38,6 +40,9 @@ class TemplateFileInfo(BaseModel):
     size_display: str
     modified_at: str
     file_type: str
+    desc: Optional[str] = None  # Metadata description
+    keywords: Optional[List[str]] = None  # Metadata keywords
+    relevance_score: Optional[float] = None  # Search relevance score
 
 
 class TemplateListResponse(BaseModel):
@@ -124,12 +129,16 @@ def _get_file_type(filename: str) -> str:
 
 
 @router.get("/templates/list", response_model=TemplateListResponse)
-async def list_templates(search: Optional[str] = None):
+async def list_templates(
+    search: Optional[str] = None,
+    use_metadata: bool = True
+):
     """
     List all template files in the templates directory (including subdirectories).
     
     Args:
         search: Optional search query to filter filenames
+        use_metadata: Use metadata search (desc + keywords) if True
     
     Returns:
         TemplateListResponse with file information
@@ -138,35 +147,72 @@ async def list_templates(search: Optional[str] = None):
         # Ensure templates directory exists
         TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
         
-        # Get all files in directory (including subdirectories)
         files = []
-        for item in TEMPLATES_DIR.rglob('*'):  # Use rglob for recursive search
-            if item.is_file():
+        
+        if search and use_metadata:
+            # Layer 2: Metadata search
+            logger.info(f"Searching with metadata: {search}")
+            search_results = metadata_service.search(
+                search,
+                search_filename=True,
+                search_metadata=True
+            )
+            
+            # Build file info for search results
+            for filename, score in search_results:
+                file_path = TEMPLATES_DIR / filename
+                if not file_path.exists():
+                    continue
+                
+                stat = file_path.stat()
+                metadata = metadata_service.get_metadata(filename)
+                
+                files.append(TemplateFileInfo(
+                    filename=filename,
+                    size_bytes=stat.st_size,
+                    size_display=_format_file_size(stat.st_size),
+                    modified_at=str(stat.st_mtime),
+                    file_type=_get_file_type(file_path.name),
+                    desc=metadata.desc if metadata else None,
+                    keywords=metadata.keywords if metadata else None,
+                    relevance_score=score
+                ))
+        else:
+            # Layer 1: Simple filename search (or list all)
+            for item in TEMPLATES_DIR.rglob('*'):
+                if not item.is_file():
+                    continue
+                
                 # Skip hidden files and README
                 if item.name.startswith('.') or item.name == 'README.md':
                     continue
                 
-                # Apply search filter if provided
+                # Apply simple filename filter if provided
                 if search and search.lower() not in item.name.lower():
                     continue
                 
                 stat = item.stat()
-                # Get relative path from templates directory
                 relative_path = item.relative_to(TEMPLATES_DIR)
-                display_name = str(relative_path)  # Show path with subdirectory
+                filename = str(relative_path)
+                
+                # Try to get metadata if available
+                metadata = metadata_service.get_metadata(filename)
                 
                 files.append(TemplateFileInfo(
-                    filename=display_name,  # Use relative path as filename
+                    filename=filename,
                     size_bytes=stat.st_size,
                     size_display=_format_file_size(stat.st_size),
                     modified_at=str(stat.st_mtime),
-                    file_type=_get_file_type(item.name)
+                    file_type=_get_file_type(item.name),
+                    desc=metadata.desc if metadata else None,
+                    keywords=metadata.keywords if metadata else None
                 ))
+            
+            # Sort by modified time (newest first) if no search
+            if not search:
+                files.sort(key=lambda x: float(x.modified_at), reverse=True)
         
-        # Sort by modified time (newest first)
-        files.sort(key=lambda x: float(x.modified_at), reverse=True)
-        
-        logger.info(f"Listed {len(files)} template files from {TEMPLATES_DIR} (including subdirectories)")
+        logger.info(f"Listed {len(files)} template files from {TEMPLATES_DIR}")
         
         return TemplateListResponse(
             templates=files,
@@ -590,4 +636,146 @@ async def download_export(export_filename: str):
         raise HTTPException(
             status_code=500,
             detail=f"下载失败: {str(e)}"
+        )
+
+
+# ============================================================================
+# Metadata Management Endpoints
+# ============================================================================
+
+@router.post("/templates/index")
+async def index_templates(force: bool = False):
+    """
+    Index all template files to build metadata.
+    
+    Args:
+        force: Force re-indexing of all files
+    
+    Returns:
+        Status of indexing operation
+    """
+    try:
+        logger.info(f"Starting template indexing (force={force})")
+        metadata_service.index_all(force=force)
+        
+        return {
+            "success": True,
+            "message": "模板索引已更新",
+            "indexed_count": len(metadata_service._index)
+        }
+    except Exception as e:
+        logger.exception("Failed to index templates")
+        raise HTTPException(
+            status_code=500,
+            detail=f"索引失败: {str(e)}"
+        )
+
+
+@router.post("/templates/{filename:path}/index")
+async def index_single_template(filename: str, force: bool = False):
+    """
+    Index a single template file.
+    
+    Args:
+        filename: Template filename (relative path)
+        force: Force re-indexing
+    
+    Returns:
+        Metadata for the indexed file
+    """
+    try:
+        file_path = TEMPLATES_DIR / filename
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        metadata = metadata_service.index_file(file_path, force=force)
+        
+        if metadata:
+            return {
+                "success": True,
+                "metadata": metadata.to_dict()
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="索引失败"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to index template: {filename}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"索引失败: {str(e)}"
+        )
+
+
+class UpdateMetadataRequest(BaseModel):
+    """Request to update template metadata."""
+    desc: Optional[str] = None
+    keywords: Optional[List[str]] = None
+
+
+@router.put("/templates/{filename:path}/metadata")
+async def update_template_metadata(filename: str, request: UpdateMetadataRequest):
+    """
+    Update metadata for a template file.
+    
+    Args:
+        filename: Template filename (relative path)
+        request: Metadata update request
+    
+    Returns:
+        Updated metadata
+    """
+    try:
+        metadata_service.update_metadata(
+            filename,
+            desc=request.desc,
+            keywords=request.keywords
+        )
+        
+        metadata = metadata_service.get_metadata(filename)
+        
+        return {
+            "success": True,
+            "metadata": metadata.to_dict() if metadata else None
+        }
+    except Exception as e:
+        logger.exception(f"Failed to update metadata: {filename}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"更新元数据失败: {str(e)}"
+        )
+
+
+@router.get("/templates/{filename:path}/metadata")
+async def get_template_metadata(filename: str):
+    """
+    Get metadata for a template file.
+    
+    Args:
+        filename: Template filename (relative path)
+    
+    Returns:
+        Template metadata
+    """
+    try:
+        metadata = metadata_service.get_metadata(filename)
+        
+        if metadata:
+            return {
+                "success": True,
+                "metadata": metadata.to_dict()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "未找到元数据，请先索引该文件"
+            }
+    except Exception as e:
+        logger.exception(f"Failed to get metadata: {filename}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取元数据失败: {str(e)}"
         )

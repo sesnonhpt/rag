@@ -15,18 +15,19 @@ export default function TemplateListPage() {
   const [templates, setTemplates] = useState<TemplateFileInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [activeSearch, setActiveSearch] = useState('') // 实际执行搜索的关键词
   const [error, setError] = useState('')
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['根目录']))
 
   useEffect(() => {
     loadTemplates()
-  }, [search])
+  }, [activeSearch])
 
   const loadTemplates = async () => {
     try {
       setLoading(true)
       setError('')
-      const data = await templateApi.list(search)
+      const data = await templateApi.list(activeSearch || undefined)
       setTemplates(data.templates || [])
     } catch (err: any) {
       console.error('Failed to load templates:', err)
@@ -34,6 +35,21 @@ export default function TemplateListPage() {
       setTemplates([]) // Ensure templates is always an array
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleSearch = () => {
+    setActiveSearch(search)
+  }
+
+  const handleClearSearch = () => {
+    setSearch('')
+    setActiveSearch('')
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch()
     }
   }
 
@@ -108,14 +124,31 @@ export default function TemplateListPage() {
         <p className="text-gray-600 mb-4">浏览、编辑和管理导学案模板文件</p>
         
         <div className="flex gap-4">
-          <div className="flex-1">
+          <div className="flex-1 relative">
             <Input
               placeholder="🔍 搜索模板文件名..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyPress={handleKeyPress}
             />
+            {search && (
+              <button
+                onClick={handleClearSearch}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                title="清除搜索"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
-          <Button onClick={loadTemplates}>刷新</Button>
+          <Button onClick={handleSearch} disabled={loading}>
+            搜索
+          </Button>
+          <Button onClick={loadTemplates} disabled={loading} variant="secondary">
+            {loading ? '加载中...' : '刷新'}
+          </Button>
         </div>
       </div>
 
@@ -123,10 +156,17 @@ export default function TemplateListPage() {
       {templates && templates.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
           <div className="flex justify-between items-center">
-            <span className="text-gray-600">共找到</span>
+            <span className="text-gray-600">
+              {activeSearch ? '搜索结果：' : '共找到'}
+            </span>
             <span className="text-2xl font-bold text-primary">{templates.length}</span>
             <span className="text-gray-600">个模板文件</span>
           </div>
+          {activeSearch && (
+            <p className="text-sm text-gray-500 mt-2 text-center">
+              搜索关键词：<span className="font-semibold">"{activeSearch}"</span>
+            </p>
+          )}
         </div>
       )}
 
@@ -140,8 +180,23 @@ export default function TemplateListPage() {
       {/* Template Grid by Folder */}
       {templates.length === 0 && !loading ? (
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-          <div className="text-6xl mb-4 opacity-30">📭</div>
-          <p className="text-gray-600">暂无模板文件，请将文件放入 data/templates/ 目录</p>
+          <div className="text-6xl mb-4 opacity-30">
+            {activeSearch ? '🔍' : '📭'}
+          </div>
+          <p className="text-gray-600">
+            {activeSearch 
+              ? `未找到包含 "${activeSearch}" 的模板文件` 
+              : '暂无模板文件，请将文件放入 data/templates/ 目录'}
+          </p>
+          {activeSearch && (
+            <Button 
+              variant="secondary" 
+              className="mt-4"
+              onClick={handleClearSearch}
+            >
+              清除搜索
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-6">

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -50,12 +51,56 @@ class TemplateMetadata:
 class TemplateMetadataService:
     """Service for managing template metadata index."""
     
-    def __init__(self, templates_dir: Path, metadata_file: Path = None):
+    def __init__(self, templates_dir: Path, metadata_file: Path = None, use_llm: bool = True):
         self.templates_dir = templates_dir
         self.metadata_file = metadata_file or templates_dir / ".metadata_index.json"
         self.parser = FileParserService()
+        self.use_llm = use_llm
         self._index: Dict[str, TemplateMetadata] = {}
+        self._llm = None
+        
+        # Initialize LLM if enabled
+        if self.use_llm:
+            self._init_llm()
+        
         self._load_index()
+    
+    def _init_llm(self):
+        """Initialize MiniMax LLM for metadata generation."""
+        try:
+            from src.libs.llm.openai_llm import OpenAILLM
+            from types import SimpleNamespace
+            
+            # Get MiniMax config from environment
+            api_key = os.environ.get("MINIMAX_API_KEY")
+            base_url = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1")
+            
+            if not api_key:
+                logger.warning("MINIMAX_API_KEY not found, LLM metadata generation disabled")
+                self.use_llm = False
+                return
+            
+            # Create a minimal settings object for OpenAILLM
+            settings = SimpleNamespace(
+                llm=SimpleNamespace(
+                    model="abab6.5s-chat",  # MiniMax model
+                    temperature=0.7,
+                    max_tokens=500,
+                    api_key=api_key
+                )
+            )
+            
+            self._llm = OpenAILLM(settings, base_url=base_url)
+            
+            # Test the connection
+            from src.libs.llm.base_llm import Message
+            test_msg = [Message(role="user", content="测试")]
+            self._llm.chat(test_msg, max_tokens=10)
+            
+            logger.info("MiniMax LLM initialized and tested successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM, using rule-based fallback: {e}")
+            self.use_llm = False
     
     def _load_index(self):
         """Load metadata index from file."""
@@ -97,8 +142,8 @@ class TemplateMetadataService:
             logger.error(f"Failed to extract text: {e}")
             return ""
     
-    def _generate_keywords(self, filename: str, content: str) -> List[str]:
-        """Generate keywords from filename and content."""
+    def _generate_keywords_rule_based(self, filename: str, content: str) -> List[str]:
+        """Generate keywords using rule-based extraction (fallback)."""
         keywords = []
         
         # Extract from filename
@@ -108,7 +153,8 @@ class TemplateMetadataService:
         # Extract common educational terms from content
         educational_terms = [
             '年级', '单元', '课时', '教学', '学习', '练习', '作业',
-            '导学案', '教案', '试卷', '测试', '复习', '预习'
+            '导学案', '教案', '试卷', '测试', '复习', '预习',
+            '数学', '语文', '英语', '科学', '物理', '化学', '生物'
         ]
         
         content_lower = content.lower()
@@ -118,6 +164,78 @@ class TemplateMetadataService:
         
         # Remove duplicates and return
         return list(set(keywords))
+    
+    def _generate_keywords_with_llm(self, filename: str, content: str) -> List[str]:
+        """Generate keywords using MiniMax LLM."""
+        from src.libs.llm.base_llm import Message
+        
+        # Truncate content to avoid token limits
+        content_sample = content[:1000] if len(content) > 1000 else content
+        
+        prompt = f"""请分析以下教学文档，提取5-10个关键词。关键词应该包括：
+1. 学科（如：数学、语文、英语等）
+2. 年级（如：六年级、五年级等）
+3. 主题（如：方程、分数、单元等）
+4. 文档类型（如：导学案、教案、试卷等）
+
+文件名：{filename}
+文档内容：
+{content_sample}
+
+请只返回关键词列表，用逗号分隔，不要其他解释。"""
+
+        messages = [Message(role="user", content=prompt)]
+        response = self._llm.chat(messages, temperature=0.3, max_tokens=200)
+        
+        # Parse keywords from response
+        keywords_text = response.content.strip()
+        keywords = [k.strip() for k in keywords_text.split(',') if k.strip()]
+        
+        logger.info(f"LLM generated {len(keywords)} keywords for {filename}")
+        return keywords[:10]  # Limit to 10 keywords
+    
+    def _generate_metadata_with_llm(self, filename: str, content: str) -> tuple[str, List[str]]:
+        """Generate both description and keywords using MiniMax LLM."""
+        from src.libs.llm.base_llm import Message
+        
+        # Truncate content to avoid token limits
+        content_sample = content[:1500] if len(content) > 1500 else content
+        
+        prompt = f"""请分析以下教学文档，生成：
+1. 一句话描述（50字以内，说明这是什么文档、适用年级、主题）
+2. 5-10个关键词（用逗号分隔）
+
+文件名：{filename}
+文档内容：
+{content_sample}
+
+请按以下格式返回：
+描述：[一句话描述]
+关键词：[关键词1,关键词2,关键词3,...]"""
+
+        messages = [Message(role="user", content=prompt)]
+        response = self._llm.chat(messages, temperature=0.3, max_tokens=300)
+        
+        # Parse response
+        lines = response.content.strip().split('\n')
+        desc = ""
+        keywords = []
+        
+        for line in lines:
+            if line.startswith('描述：') or line.startswith('描述:'):
+                desc = line.split('：', 1)[-1].split(':', 1)[-1].strip()
+            elif line.startswith('关键词：') or line.startswith('关键词:'):
+                keywords_text = line.split('：', 1)[-1].split(':', 1)[-1].strip()
+                keywords = [k.strip() for k in keywords_text.split(',') if k.strip()]
+        
+        # Fallback if parsing failed
+        if not desc:
+            desc = content[:100] + '...'
+        if not keywords:
+            keywords = self._generate_keywords_rule_based(filename, content)
+        
+        logger.info(f"LLM generated metadata for {filename}: desc={len(desc)} chars, keywords={len(keywords)}")
+        return desc, keywords[:10]
     
     def index_file(self, file_path: Path, force: bool = False) -> Optional[TemplateMetadata]:
         """
@@ -150,11 +268,18 @@ class TemplateMetadataService:
             # Extract text preview
             content_preview = self._extract_text_from_html(parse_result.html_content)
             
-            # Generate keywords
-            keywords = self._generate_keywords(filename, content_preview)
-            
-            # Generate description (first 200 chars of content)
-            desc = content_preview[:200] + ('...' if len(content_preview) > 200 else '')
+            # Generate description and keywords using LLM
+            if self.use_llm and self._llm:
+                try:
+                    desc, keywords = self._generate_metadata_with_llm(filename, content_preview)
+                except Exception as e:
+                    logger.error(f"LLM metadata generation failed, using fallback: {e}")
+                    desc = content_preview[:200] + ('...' if len(content_preview) > 200 else '')
+                    keywords = self._generate_keywords_rule_based(filename, content_preview)
+            else:
+                # Fallback to simple extraction
+                desc = content_preview[:200] + ('...' if len(content_preview) > 200 else '')
+                keywords = self._generate_keywords_rule_based(filename, content_preview)
             
             # Create metadata
             metadata = TemplateMetadata(

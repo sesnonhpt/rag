@@ -52,6 +52,9 @@ coverage.xml
 
 # Environments
 .env
+.env.*
+!.env.example
+!.env.*.example
 .venv
 env/
 venv/
@@ -103,6 +106,8 @@ data/*
 data/db/*
 !data/db/image_index.db
 !data/templates
+# Ignore template metadata index
+data/templates/.metadata_index.json
 cache/
 logs/
 *.log

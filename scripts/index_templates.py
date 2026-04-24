@@ -8,6 +8,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# Load .env
+from dotenv import load_dotenv
+load_dotenv()
+
 from app.services.template_metadata_service import TemplateMetadataService
 from app.core.paths import APP_ROOT
 
@@ -18,7 +22,8 @@ def main():
     print(f"Indexing templates in: {templates_dir}")
     print("-" * 60)
     
-    service = TemplateMetadataService(templates_dir)
+    # Create service (will try LLM if available, fallback to rule-based)
+    service = TemplateMetadataService(templates_dir, use_llm=True)
     
     # Index all files (force=True to re-index everything)
     service.index_all(force=True)
@@ -27,6 +32,7 @@ def main():
     print(f"✓ Indexing complete!")
     print(f"  Total indexed: {len(service._index)}")
     print(f"  Metadata file: {service.metadata_file}")
+    print(f"  LLM enabled: {service.use_llm}")
     
     # Show sample results
     print("\nSample indexed files:")
