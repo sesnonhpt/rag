@@ -39,6 +39,19 @@ class OpenAILLM(BaseLLM):
     
     DEFAULT_BASE_URL = "https://api.openai.com/v1"
     DEFAULT_TIMEOUT_SECONDS = 180.0
+    DEFAULT_FALLBACK_MODEL_CANDIDATES = [
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+        "gpt-4o-mini",
+        "gpt-4o",
+        "claude-3-5-sonnet-20241022",
+        "coding-glm-5-free",
+        "gemini-2.0-flash",
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+        "gemini-3.1-flash-lite-preview",
+        "gemini-3-flash-preview",
+    ]
     
     def __init__(
         self,
@@ -149,8 +162,8 @@ class OpenAILLM(BaseLLM):
                 max_tokens=max_tokens,
             )
         except OpenAILLMError as e:
-            if self._should_retry_with_fallback(e, model):
-                fallback_model = self.fallback_model or model
+            fallback_model = self._resolve_fallback_model(model)
+            if self._should_retry_with_fallback(e, model, fallback_model):
                 response_data = self._call_api(
                     messages=api_messages,
                     model=fallback_model,
@@ -161,17 +174,6 @@ class OpenAILLM(BaseLLM):
                 )
             else:
                 raise
-            
-            # Parse response
-            content = response_data["choices"][0]["message"]["content"]
-            usage = response_data.get("usage")
-            
-            return ChatResponse(
-                content=content,
-                model=response_data.get("model", model),
-                usage=usage,
-                raw_response=response_data,
-            )
         except KeyError as e:
             raise OpenAILLMError(
                 f"[OpenAI] Unexpected response format: missing key {e}"
@@ -182,6 +184,16 @@ class OpenAILLM(BaseLLM):
             raise OpenAILLMError(
                 f"[OpenAI] API call failed: {type(e).__name__}: {e}"
             ) from e
+
+        content = response_data["choices"][0]["message"]["content"]
+        usage = response_data.get("usage")
+
+        return ChatResponse(
+            content=content,
+            model=response_data.get("model", model),
+            usage=usage,
+            raw_response=response_data,
+        )
     
     def _call_api(
         self,
@@ -254,8 +266,23 @@ class OpenAILLM(BaseLLM):
                 f"[OpenAI] Connection failed: {type(e).__name__}: {e}"
             ) from e
 
-    def _should_retry_with_fallback(self, error: OpenAILLMError, model: str) -> bool:
-        if not self.fallback_model or self.fallback_model == model:
+    def _resolve_fallback_model(self, model: str) -> Optional[str]:
+        explicit_fallback = (self.fallback_model or "").strip()
+        if explicit_fallback and explicit_fallback != model:
+            return explicit_fallback
+
+        for candidate in self.DEFAULT_FALLBACK_MODEL_CANDIDATES:
+            if candidate != model:
+                return candidate
+        return None
+
+    def _should_retry_with_fallback(
+        self,
+        error: OpenAILLMError,
+        model: str,
+        fallback_model: Optional[str],
+    ) -> bool:
+        if not fallback_model or fallback_model == model:
             return False
 
         message = str(error).lower()
