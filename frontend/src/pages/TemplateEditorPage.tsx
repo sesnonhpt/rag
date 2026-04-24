@@ -383,12 +383,12 @@ export default function TemplateEditorPage() {
               <Button size="sm" variant="secondary" className="w-full" onClick={() => handleExport('docx')}>
                 导出 DOCX
               </Button>
-              <Button size="sm" variant="secondary" className="w-full" onClick={() => handleExport('pdf')}>
+              {/* <Button size="sm" variant="secondary" className="w-full" onClick={() => handleExport('pdf')}>
                 导出 PDF
-              </Button>
-              <Button size="sm" variant="secondary" className="w-full" onClick={() => handleExport('md')}>
+              </Button> */}
+              {/* <Button size="sm" variant="secondary" className="w-full" onClick={() => handleExport('md')}>
                 导出 Markdown
-              </Button>
+              </Button> */}
             </div>
           </div>
         </div>
