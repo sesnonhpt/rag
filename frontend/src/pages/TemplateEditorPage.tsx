@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import Button from '@/components/ui/Button'
 import Loading from '@/components/ui/Loading'
 import { templateApi } from '@/api/template'
@@ -17,8 +17,15 @@ const DOWNLOAD_BASE_URL = import.meta.env.DEV
   : (import.meta.env.VITE_API_BASE_URL || '')
 
 export default function TemplateEditorPage() {
-  const { filename } = useParams<{ filename: string }>()
+  const params = useParams<{ '*': string }>()
+  const location = useLocation()
   const navigate = useNavigate()
+  
+  // Extract filename from wildcard path or location
+  // Route: /templates/edit/*
+  // URL: /templates/edit/五数下导学案/1.1%20等式与方程.docx
+  // params['*']: 五数下导学案/1.1%20等式与方程.docx (already decoded)
+  const filename = params['*'] || ''
   
   const [loading, setLoading] = useState(true)
   const [content, setContent] = useState<TemplateContent | null>(null)

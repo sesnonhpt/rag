@@ -14,7 +14,8 @@ function App() {
           <Route path="lesson" element={<LessonPage />} />
           <Route path="ppt-editor" element={<PPTEditorPage />} />
           <Route path="templates" element={<TemplateListPage />} />
-          <Route path="templates/edit/:filename" element={<TemplateEditorPage />} />
+          {/* Use * to match paths with slashes (subdirectories) */}
+          <Route path="templates/edit/*" element={<TemplateEditorPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
