@@ -4,6 +4,7 @@ import type {
   TemplateContent,
   VersionListResponse,
   AIModifyResponse,
+  CourseDraftStreamRequest,
 } from '@/types/template'
 
 const API_BASE = import.meta.env.DEV
@@ -80,6 +81,81 @@ export const templateApi = {
       instruction: instruction,
     })
     return response.data
+  },
+
+  async generateCourseDraftStream(
+    data: CourseDraftStreamRequest,
+    onEvent: (eventName: string, payload: any) => void,
+    onDone: () => void,
+    onError: (err: string) => void
+  ): Promise<() => void> {
+    const controller = new AbortController()
+    const formData = new FormData()
+
+    if (data.platform) formData.append('platform', data.platform)
+    if (data.teacher_name) formData.append('teacher_name', data.teacher_name)
+    if (data.subject) formData.append('subject', data.subject)
+    if (data.grade) formData.append('grade', data.grade)
+    if (data.topic) formData.append('topic', data.topic)
+    if (typeof data.duration_minutes === 'number') formData.append('duration_minutes', String(data.duration_minutes))
+    if (data.notes) formData.append('notes', data.notes)
+    if (data.source_text) formData.append('source_text', data.source_text)
+    formData.append('prefer_physics_pilot', data.prefer_physics_pilot ? 'true' : 'false')
+    if (data.source_file) formData.append('source_file', data.source_file)
+
+    fetch(`${API_BASE}/templates/course-to-draft/stream`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) {
+        onError(`请求失败: ${response.status} ${response.statusText}`)
+        onDone()
+        return
+      }
+
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+
+          let currentEvent = 'message'
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim()
+            } else if (line.startsWith('data: ')) {
+              try {
+                onEvent(currentEvent, JSON.parse(line.slice(6)))
+              } catch {
+                // ignore malformed JSON
+              }
+              currentEvent = 'message'
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          onError(err.message || '连接中断')
+        }
+      } finally {
+        onDone()
+      }
+    }).catch((err) => {
+      if (err.name !== 'AbortError') {
+        onError(err.message || '连接失败')
+        onDone()
+      }
+    })
+
+    return () => controller.abort()
   },
 
   /**

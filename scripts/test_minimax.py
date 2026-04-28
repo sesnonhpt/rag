@@ -13,14 +13,14 @@ sys.path.insert(0, str(project_root))
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.libs.llm.openai_llm import OpenAILLM
+from src.libs.llm.minimax_llm import MiniMaxLLM
 from src.libs.llm.base_llm import Message
 from types import SimpleNamespace
 
 def test_minimax():
     """Test MiniMax API."""
     api_key = os.environ.get("MINIMAX_API_KEY")
-    base_url = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1")
+    base_url = os.environ.get("MINIMAX_API_URL") or os.environ.get("MINIMAX_AI_URL") or "https://api.minimaxi.com/anthropic/v1"
     
     if not api_key:
         print("❌ MINIMAX_API_KEY not found in environment")
@@ -31,37 +31,22 @@ def test_minimax():
     print(f"  API Key: {api_key[:20]}...")
     print()
     
-    # Try direct HTTP request first to debug
-    import httpx
-    
     try:
-        url = f"{base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "abab6.5s-chat",
-            "messages": [{"role": "user", "content": "你好"}],
-            "temperature": 0.7,
-            "max_tokens": 50
-        }
-        
-        print(f"Making request to: {url}")
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(url, json=payload, headers=headers)
-            print(f"Status: {response.status_code}")
-            print(f"Response: {response.text[:500]}")
-            
-            if response.status_code == 200:
-                print("\n✓ MiniMax API test successful!")
-                data = response.json()
-                if "choices" in data:
-                    print(f"  Response: {data['choices'][0]['message']['content']}")
-                return True
-            else:
-                print(f"\n❌ API returned error: {response.status_code}")
-                return False
+        settings = SimpleNamespace(
+            llm=SimpleNamespace(
+                model="MiniMax-M2.7-highspeed",
+                temperature=0.7,
+                max_tokens=128,
+                api_key=api_key,
+                base_url=base_url,
+            )
+        )
+        llm = MiniMaxLLM(settings=settings, base_url=base_url)
+        response = llm.chat([Message(role="user", content="请只回复：测试成功")])
+        print("\n✓ MiniMax API test successful!")
+        print(f"  Model: {response.model}")
+        print(f"  Response: {response.content}")
+        return True
     
     except Exception as e:
         print(f"❌ MiniMax API test failed: {e}")

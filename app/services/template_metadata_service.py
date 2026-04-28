@@ -68,12 +68,16 @@ class TemplateMetadataService:
     def _init_llm(self):
         """Initialize MiniMax LLM for metadata generation."""
         try:
-            from src.libs.llm.openai_llm import OpenAILLM
+            from src.libs.llm.minimax_llm import MiniMaxLLM
             from types import SimpleNamespace
             
             # Get MiniMax config from environment
             api_key = os.environ.get("MINIMAX_API_KEY")
-            base_url = os.environ.get("MINIMAX_API_URL", "https://api.minimax.io/v1")
+            base_url = (
+                os.environ.get("MINIMAX_API_URL")
+                or os.environ.get("MINIMAX_AI_URL")
+                or "https://api.minimaxi.com/anthropic/v1"
+            )
             
             if not api_key:
                 logger.warning("MINIMAX_API_KEY not found, LLM metadata generation disabled")
@@ -83,14 +87,14 @@ class TemplateMetadataService:
             # Create a minimal settings object for OpenAILLM
             settings = SimpleNamespace(
                 llm=SimpleNamespace(
-                    model="abab6.5s-chat",  # MiniMax model
+                    model="MiniMax-M2.7-highspeed",
                     temperature=0.7,
                     max_tokens=500,
                     api_key=api_key
                 )
             )
             
-            self._llm = OpenAILLM(settings, base_url=base_url)
+            self._llm = MiniMaxLLM(settings, base_url=base_url)
             
             # Test the connection
             from src.libs.llm.base_llm import Message

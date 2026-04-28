@@ -18,6 +18,44 @@ if TYPE_CHECKING:
     from src.core.settings import Settings
 
 
+def _register_text_providers() -> None:
+    """Register all text LLM provider implementations."""
+    try:
+        from src.libs.llm.openai_llm import OpenAILLM
+        from src.libs.llm.llm_factory import LLMFactory
+        LLMFactory.register_provider("openai", OpenAILLM)
+    except ImportError:
+        pass
+
+    try:
+        from src.libs.llm.azure_llm import AzureLLM
+        from src.libs.llm.llm_factory import LLMFactory
+        LLMFactory.register_provider("azure", AzureLLM)
+    except ImportError:
+        pass
+
+    try:
+        from src.libs.llm.deepseek_llm import DeepSeekLLM
+        from src.libs.llm.llm_factory import LLMFactory
+        LLMFactory.register_provider("deepseek", DeepSeekLLM)
+    except ImportError:
+        pass
+
+    try:
+        from src.libs.llm.minimax_llm import MiniMaxLLM
+        from src.libs.llm.llm_factory import LLMFactory
+        LLMFactory.register_provider("minimax", MiniMaxLLM)
+    except ImportError:
+        pass
+
+    try:
+        from src.libs.llm.ollama_llm import OllamaLLM
+        from src.libs.llm.llm_factory import LLMFactory
+        LLMFactory.register_provider("ollama", OllamaLLM)
+    except ImportError:
+        pass
+
+
 # Import and register Vision LLM providers at module load time
 def _register_vision_providers() -> None:
     """Register all Vision LLM provider implementations.
@@ -240,4 +278,5 @@ class LLMFactory:
 
 
 # Register Vision LLM providers at module load time
+_register_text_providers()
 _register_vision_providers()
