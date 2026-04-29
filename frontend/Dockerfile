@@ -28,6 +28,9 @@ RUN npm run build
 # Production stage
 FROM docker.m.daocloud.io/nginx:alpine
 
+# Provide a predictable healthcheck client in CI/runtime environments.
+RUN apk add --no-cache curl
+
 # Copy built files from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
@@ -39,8 +42,8 @@ EXPOSE 80
 
 # Health check
 # Use an Alpine/busybox-compatible probe to avoid false unhealthy states in CI.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD curl -fsS http://127.0.0.1/ >/dev/null || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
