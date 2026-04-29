@@ -25,9 +25,9 @@ services:
     environment:
       # LLM
       - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_PROVIDER=openai
-      - LLM_BASE_URL=https://aihubmix.com/v1
-      - LLM_MODEL=coding-glm-5-free
+      - LLM_PROVIDER=${LLM_PROVIDER:-minimax}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.minimaxi.com/anthropic/v1}
+      - LLM_MODEL=${LLM_MODEL:-MiniMax-M2.7-highspeed}
       # Embedding
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
       - EMBEDDING_PROVIDER=openai
@@ -64,9 +64,9 @@ services:
       - "8501:8501"
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_PROVIDER=openai
-      - LLM_BASE_URL=https://aihubmix.com/v1
-      - LLM_MODEL=coding-glm-5-free
+      - LLM_PROVIDER=${LLM_PROVIDER:-minimax}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.minimaxi.com/anthropic/v1}
+      - LLM_MODEL=${LLM_MODEL:-MiniMax-M2.7-highspeed}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
       - API_BASE_URL=http://api:8000
     depends_on:
