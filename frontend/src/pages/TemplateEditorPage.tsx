@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import Button from '@/components/ui/Button'
-import Input from '@/components/ui/Input'
-import Select from '@/components/ui/Select'
-import Textarea from '@/components/ui/Textarea'
 import Loading from '@/components/ui/Loading'
 import TeachingThoughtsTimeline from '@/components/TeachingThoughtsTimeline'
 import ContentEnhancer from '@/components/ContentEnhancer'
+import LessonDeepAnalysisPanel from '@/components/LessonDeepAnalysisPanel'
 import { templateApi } from '@/api/template'
 import { renderMarkdown } from '@/utils/markdown'
 import type {
@@ -15,6 +13,7 @@ import type {
   CourseDraftResult,
   CourseDraftStreamStage,
   TeachingThought,
+  LessonAnalysis,
 } from '@/types/template'
 
 declare global {
@@ -27,35 +26,6 @@ const DOWNLOAD_BASE_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
   : (import.meta.env.VITE_API_BASE_URL || '')
 
-const commonPrompts = [
-  { label: '老师口吻', prompt: '把这段文字改成老师上课时更自然、更顺口的表达。' },
-  { label: '更易懂', prompt: '把这段内容改得更容易让学生听懂，少一些书面腔。' },
-  { label: '补例子', prompt: '围绕这段内容补一个贴近课堂的例子，便于讲解。' },
-  { label: '改提问', prompt: '把这段内容改成老师课堂提问的表达方式。' },
-  { label: '压缩精简', prompt: '保留原意，把这段话压缩得更短、更清楚。' },
-  { label: '活动引导', prompt: '把这段内容改写成适合课堂活动引导的话术。' },
-]
-
-const platformCards = [
-  { value: '国家教育智慧平台', label: '国家教育智慧平台', desc: '适合接入国家精品课、课程实录和示范课文字稿。' },
-  { value: '江苏名师空中课堂', label: '江苏名师空中课堂', desc: '适合提炼课堂结构、导入方式和提问设计。' },
-  { value: '名师优质课', label: '名师优质课', desc: '适合对标优质课、公开课和校本打磨课。' },
-  { value: '自备资料', label: '自备资料', desc: '老师自己整理的文字稿、录音或导出的文档也可以直接用。' },
-]
-
-const subjectOptions = [
-  { value: '物理', label: '物理（优先试点）' },
-  { value: '化学', label: '化学' },
-  { value: '生物', label: '生物' },
-  { value: '数学', label: '数学' },
-]
-
-const gradeOptions = [
-  { value: '', label: '未指定年级' },
-  { value: '初中', label: '初中' },
-  { value: '高中', label: '高中' },
-]
-
 const courseStageOrder: CourseDraftStreamStage[] = [
   'queued',
   'parsing_source',
@@ -64,67 +34,6 @@ const courseStageOrder: CourseDraftStreamStage[] = [
   'building_design',
   'teacher_rewrite',
 ]
-
-const courseStageMeta: Record<CourseDraftStreamStage, { title: string; detail: string; tool: string }> = {
-  queued: {
-    title: '开始接手精品课整理任务',
-    detail: '先接收平台、老师、学科和课堂材料。',
-    tool: '任务接收器',
-  },
-  parsing_source: {
-    title: '正在读取文字稿或语音稿',
-    detail: '把上传内容整理成可分析的课堂原文。',
-    tool: '课程解析器',
-  },
-  understanding_course: {
-    title: '正在拆解这节课的主线',
-    detail: '重点提炼教学环节、老师提问方式和学生容易卡住的地方。',
-    tool: '精品课拆解助手',
-  },
-  extracting_thoughts: {
-    title: '正在理解这节课的设计思路',
-    detail: '从名师课堂中提取 5 个核心备课维度。',
-    tool: '备课思路分析器',
-  },
-  building_design: {
-    title: '正在生成第一版教学设计',
-    detail: '把 45 分钟课堂内容压缩成老师可继续修改的课堂设计初稿。',
-    tool: '教学设计生成器',
-  },
-  teacher_rewrite: {
-    title: '正在把内容改成老师好用的话',
-    detail: '过滤技术味和论文腔，让课堂表达更顺。',
-    tool: '教师语言润色器',
-  },
-}
-
-const pilotPresets = [
-  {
-    title: '牛顿第一定律',
-    subject: '物理',
-    grade: '高中',
-    topic: '牛顿第一定律',
-    notes: '按 45 分钟课堂设计。突出情境导入、实验观察、惯性概念形成、易错辨析和当堂检测。',
-  },
-  {
-    title: '加速度',
-    subject: '物理',
-    grade: '高中',
-    topic: '加速度',
-    notes: '按老师备课思路生成完整教学设计。突出位移、速度变化、生活例子和学生常见误解。',
-  },
-  {
-    title: '电磁感应',
-    subject: '物理',
-    grade: '高中',
-    topic: '法拉第电磁感应',
-    notes: '偏实验探究。要写清现象观察、规律归纳、图示辅助和课堂提问链条。',
-  },
-]
-
-function countEffectiveChars(text: string) {
-  return String(text || '').replace(/\s+/g, '').length
-}
 
 function summarizeDraft(result: CourseDraftResult | null) {
   if (!result) return ''
@@ -156,28 +65,29 @@ export default function TemplateEditorPage() {
   const [imageLoading, setImageLoading] = useState(false)
   const [showImageDialog, setShowImageDialog] = useState(false)
 
-  const [platform, setPlatform] = useState('国家教育智慧平台')
-  const [teacherName, setTeacherName] = useState('')
+  const [platform] = useState('国家教育智慧平台')
+  const [teacherName] = useState('')
   const [subject, setSubject] = useState('物理')
   const [grade, setGrade] = useState('高中')
   const [topic, setTopic] = useState('')
-  const [durationMinutes, setDurationMinutes] = useState('45')
-  const [courseNotes, setCourseNotes] = useState('')
-  const [sourceText, setSourceText] = useState('')
-  const [sourceFile, setSourceFile] = useState<File | null>(null)
+  const [durationMinutes] = useState('45')
+  const [courseNotes] = useState('')
+  const [sourceUrl] = useState('')
+  const [sourceText] = useState('')
+  const [sourceFile] = useState<File | null>(null)
   const [courseLoading, setCourseLoading] = useState(false)
   const [courseError, setCourseError] = useState('')
   const [courseProgress, setCourseProgress] = useState<CourseDraftProgressEvent[]>([])
   const [courseResult, setCourseResult] = useState<CourseDraftResult | null>(null)
   const [teachingThoughts, setTeachingThoughts] = useState<TeachingThought[]>([])
+  const [lessonAnalysis, setLessonAnalysis] = useState<LessonAnalysis | null>(null)
 
-  const editorRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<HTMLDivElement | null>(null)
   const quillRef = useRef<any>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [quillLoaded, setQuillLoaded] = useState(false)
   const [editorMounted, setEditorMounted] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const courseAbortRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
@@ -316,42 +226,28 @@ export default function TemplateEditorPage() {
     
     // 异步生成备课思路，不阻塞正文加载
     if (filename) {
-      generateTeachingThoughts(filename)
+      loadLegacyGuidePilotPackage(filename)
     }
   }
 
-  // 生成备课思路（异步，不阻塞）
-  const generateTeachingThoughts = async (filename: string) => {
+  const loadLegacyGuidePilotPackage = async (filename: string) => {
     try {
-      // 先读取文件内容
-      const contentResponse = await fetch(`/api/templates/${encodeURIComponent(filename)}/content`)
-      if (!contentResponse.ok) return
-      
-      const contentData = await contentResponse.json()
-      const div = document.createElement('div')
-      div.innerHTML = contentData.content_html
-      const textContent = div.textContent || div.innerText || ''
-      
-      // 调用后端 API 分析
-      const formData = new FormData()
-      formData.append('content', textContent)
-      formData.append('subject', '物理')  // TODO: 从文件元数据中获取
-      formData.append('topic', contentData.filename || '')
-      formData.append('grade', '高中')
-      
-      const response = await fetch('/api/templates/extract-teaching-thoughts', {
-        method: 'POST',
-        body: formData
-      })
-      
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success && data.thoughts) {
-          setTeachingThoughts(data.thoughts)
+      const data = await templateApi.getLegacyGuidePilotPackage(filename)
+      if (data.success) {
+        setLessonAnalysis(data.analysis)
+        setTeachingThoughts(data.thoughts || [])
+        if (!topic.trim() && data.analysis.topic) {
+          setTopic(data.analysis.topic)
+        }
+        if (data.analysis.subject && data.analysis.subject !== '未知学科') {
+          setSubject(data.analysis.subject)
+        }
+        if (data.analysis.grade && data.analysis.grade !== '未明确年级') {
+          setGrade(data.analysis.grade)
         }
       }
-    } catch (err) {
-      console.error('生成备课思路失败:', err)
+    } catch (err: any) {
+      console.error('生成导学案拆解失败:', err)
       // 失败不影响主流程
     }
   }
@@ -466,6 +362,12 @@ export default function TemplateEditorPage() {
     quillRef.current.setSelection(0)
   }
 
+  const applyAnalysisSkeleton = () => {
+    if (!quillRef.current || !lessonAnalysis?.skeleton_markdown) return
+    quillRef.current.root.innerHTML = renderMarkdown(lessonAnalysis.skeleton_markdown)
+    quillRef.current.setSelection(0)
+  }
+
   const startCourseDraft = async (overrides?: Partial<{
     platform: string
     teacherName: string
@@ -474,6 +376,7 @@ export default function TemplateEditorPage() {
     topic: string
     durationMinutes: string
     notes: string
+    sourceUrl: string
     sourceText: string
     sourceFile: File | null
     preferPhysicsPilot: boolean
@@ -485,12 +388,13 @@ export default function TemplateEditorPage() {
     const nextTopic = overrides?.topic ?? topic
     const nextDurationMinutes = overrides?.durationMinutes ?? durationMinutes
     const nextNotes = overrides?.notes ?? courseNotes
+    const nextSourceUrl = overrides?.sourceUrl ?? sourceUrl
     const nextSourceText = overrides?.sourceText ?? sourceText
     const nextSourceFile = overrides?.sourceFile ?? sourceFile
     const preferPhysicsPilot = overrides?.preferPhysicsPilot ?? false
 
-    if (!nextTopic.trim() && !nextSourceText.trim() && !nextSourceFile) {
-      alert('请至少填写知识点，或提供精品课文字/语音材料。')
+    if (!nextTopic.trim() && !nextSourceUrl.trim() && !nextSourceText.trim() && !nextSourceFile) {
+      alert('请至少填写知识点，或提供精品课 URL / 文字 / 语音材料。')
       return
     }
 
@@ -509,6 +413,7 @@ export default function TemplateEditorPage() {
         topic: nextTopic,
         duration_minutes: Number(nextDurationMinutes || 45),
         notes: nextNotes,
+        source_url: nextSourceUrl,
         source_text: nextSourceText,
         prefer_physics_pilot: preferPhysicsPilot,
         source_file: nextSourceFile,
@@ -549,39 +454,8 @@ export default function TemplateEditorPage() {
     courseAbortRef.current = abort
   }
 
-  const runPilotPreset = async (preset: typeof pilotPresets[number]) => {
-    setPlatform('名师优质课')
-    setTeacherName('王崧舟 / 何捷风格参考')
-    setSubject(preset.subject)
-    setGrade(preset.grade)
-    setTopic(preset.topic)
-    setCourseNotes(preset.notes)
-    await startCourseDraft({
-      platform: '名师优质课',
-      teacherName: '王崧舟 / 何捷风格参考',
-      subject: preset.subject,
-      grade: preset.grade,
-      topic: preset.topic,
-      notes: preset.notes,
-      sourceText: '',
-      sourceFile: null,
-      preferPhysicsPilot: true,
-    })
-  }
-
-  const fileTitle = useMemo(() => filename.split('/').pop() || filename, [filename])
   const currentCourseStage = courseProgress[courseProgress.length - 1]
-  const currentCourseStageIndex = currentCourseStage ? courseStageOrder.indexOf(currentCourseStage.stage) : -1
-  const sourceTextCount = countEffectiveChars(sourceText)
-  const hasCourseMaterial = sourceTextCount > 0 || Boolean(sourceFile)
   const draftSummary = summarizeDraft(courseResult)
-  const workspaceStatus = courseLoading
-    ? 'AI 正在处理中'
-    : courseResult
-      ? '已生成第一版教学设计'
-      : hasCourseMaterial || topic.trim()
-        ? '可以开始整理'
-        : '等待老师提供材料'
 
   if (loading) {
     return <Loading message="正在加载模板编辑器..." />
@@ -601,47 +475,15 @@ export default function TemplateEditorPage() {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f6f9fc_0%,#eef3f8_100%)]">
       <div className="mx-auto max-w-[1520px] px-4 py-8 sm:px-6 lg:px-8">
-        {/* <div className="mb-8 rounded-[36px] bg-[radial-gradient(circle_at_top_left,#1e3a8a_0%,#0f172a_48%,#020617_100%)] px-6 py-8 text-white shadow-[0_30px_120px_rgba(15,23,42,0.35)] sm:px-8">
-          <div className="grid gap-6 xl:grid-cols-[1.45fr_0.85fr]">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-sky-300">导学案编辑工作台</p>
-              <h1 className="mt-3 max-w-4xl text-3xl font-bold leading-tight sm:text-4xl">
-                编辑和优化你的导学案内容
-              </h1>
-              <p className="mt-4 max-w-3xl text-base leading-8 text-slate-300">
-                左侧编辑器支持富文本编辑，可以直接修改导学案内容；右侧提供 AI 辅助工具，帮助你优化文字表达和教学设计。
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-              <div className="rounded-3xl border border-white/10 bg-white/8 px-5 py-4">
-                <div className="text-sm font-semibold text-sky-300">当前文件</div>
-                <div className="mt-2 break-all text-base font-bold">{fileTitle}</div>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-white/8 px-5 py-4">
-                <div className="text-sm font-semibold text-emerald-300">编辑模式</div>
-                <div className="mt-2 text-sm font-medium text-slate-100">富文本编辑 + AI 辅助优化</div>
-              </div>
-            </div>
-          </div>
-        </div> */}
-
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.72fr)_430px]">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_520px]">
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)] sm:p-6">
             <div className="mb-5 flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">教学设计正文</p>
                 <h2 className="mt-2 text-2xl font-bold text-slate-900">{content?.filename}</h2>
-                <p className="mt-2 text-sm leading-7 text-slate-500">
-                  这里承接最终内容。AI 生成的第一版教学设计会直接写进来，老师只需要继续补、删、改。
-                </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <div className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">最终可导出内容</div>
                   <div className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">AI 生成后自动回写</div>
-                  {courseResult && (
-                    <div className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                      最近一次写入：{courseResult.subject} · {courseResult.topic} · {courseResult.source_label}
-                    </div>
-                  )}
                 </div>
               </div>
               <div className="flex gap-3">
@@ -653,34 +495,6 @@ export default function TemplateEditorPage() {
                 </Button>
               </div>
             </div>
-
-            {courseResult && (
-              <div className="mb-5 grid gap-4 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-5 sm:grid-cols-[1.2fr_0.8fr]">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">本次生成摘要</p>
-                  <h3 className="mt-2 text-lg font-bold text-slate-900">{courseResult.topic} · 第一版教学设计已写入正文</h3>
-                  <p className="mt-2 text-sm leading-7 text-slate-700">{draftSummary}</p>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl bg-white px-4 py-4">
-                    <div className="text-xs text-slate-400">来源</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-900">{courseResult.source_label}</div>
-                  </div>
-                  <div className="rounded-2xl bg-white px-4 py-4">
-                    <div className="text-xs text-slate-400">学科</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-900">{courseResult.subject}</div>
-                  </div>
-                  <div className="rounded-2xl bg-white px-4 py-4">
-                    <div className="text-xs text-slate-400">课时</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-900">{courseResult.duration_minutes} 分钟</div>
-                  </div>
-                  <div className="rounded-2xl bg-white px-4 py-4">
-                    <div className="text-xs text-slate-400">建议动作</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-900">先看主线，再改细节</div>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="relative">
               <div 
@@ -862,6 +676,23 @@ export default function TemplateEditorPage() {
           </section>
 
           <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
+            <LessonDeepAnalysisPanel
+              filename={filename}
+              onApplySkeleton={applyAnalysisSkeleton}
+              getEditorContent={() => quillRef.current?.root?.innerHTML ?? ''}
+              applyToEditor={(html) => {
+                if (!quillRef.current) return
+                // 在编辑器末尾追加内容，不覆盖原文
+                const quill = quillRef.current
+                const length = quill.getLength()
+                // 插入分隔线和新内容
+                quill.insertText(length - 1, '\n\n── AI 改进建议 ──\n', { bold: false })
+                const newLength = quill.getLength()
+                quill.clipboard.dangerouslyPasteHTML(newLength - 1, html)
+                quill.setSelection(newLength)
+              }}
+            />
+
             {/* 备课思路 - 横向流水线 */}
             <TeachingThoughtsTimeline thoughts={teachingThoughts} />
 

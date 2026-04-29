@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 import httpx
 
@@ -12,6 +12,12 @@ from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
 
 class MiniMaxLLMError(RuntimeError):
     """Raised when MiniMax API call fails."""
+
+
+class StreamChunk:
+    """Represents a chunk from streaming response."""
+    def __init__(self, content: str):
+        self.content = content
 
 
 class MiniMaxLLM(BaseLLM):
@@ -125,6 +131,60 @@ class MiniMaxLLM(BaseLLM):
             raw_response=response_data,
         )
 
+    def chat_stream(
+        self,
+        messages: List[Message],
+        trace: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Generator[StreamChunk, None, None]:
+        """
+        Generate a streaming chat completion response.
+        
+        Args:
+            messages: List of conversation messages (role + content).
+            trace: Optional TraceContext for observability.
+            **kwargs: Provider-specific parameters.
+        
+        Yields:
+            StreamChunk objects containing incremental content.
+        """
+        self.validate_messages(messages)
+
+        temperature = kwargs.get("temperature", self.default_temperature)
+        max_tokens = kwargs.get("max_tokens", self.default_max_tokens)
+        model = kwargs.get("model", self.model)
+
+        system_chunks: List[str] = []
+        anthropic_messages: List[Dict[str, Any]] = []
+        for msg in messages:
+            if msg.role == "system":
+                system_chunks.append(msg.content.strip())
+                continue
+            anthropic_messages.append(
+                {
+                    "role": "assistant" if msg.role == "assistant" else "user",
+                    "content": [{"type": "text", "text": msg.content}],
+                }
+            )
+
+        if not anthropic_messages:
+            anthropic_messages.append(
+                {"role": "user", "content": [{"type": "text", "text": "请继续。"}]}
+            )
+
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,  # 启用流式输出
+        }
+        if system_chunks:
+            payload["system"] = "\n\n".join(system_chunks)
+
+        # 调用流式API
+        yield from self._call_api_stream(payload)
+
     def _call_api(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base_url}/messages"
         headers = {
@@ -141,6 +201,58 @@ class MiniMaxLLM(BaseLLM):
                     f"[MiniMax] API error (HTTP {response.status_code}): {response.text[:500]}"
                 )
             return response.json()
+        except httpx.TimeoutException as exc:
+            raise MiniMaxLLMError("[MiniMax] Request timed out") from exc
+        except httpx.HTTPError as exc:
+            raise MiniMaxLLMError(f"[MiniMax] HTTP error: {exc}") from exc
+
+    def _call_api_stream(self, payload: Dict[str, Any]) -> Generator[StreamChunk, None, None]:
+        """Call API with streaming enabled."""
+        url = f"{self.base_url}/messages"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "anthropic-version": self.api_version,
+        }
+
+        try:
+            with httpx.Client(timeout=self.request_timeout) as client:
+                with client.stream("POST", url, json=payload, headers=headers) as response:
+                    if response.status_code != 200:
+                        error_text = response.read().decode('utf-8')
+                        raise MiniMaxLLMError(
+                            f"[MiniMax] API error (HTTP {response.status_code}): {error_text[:500]}"
+                        )
+                    
+                    # 解析SSE流
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        
+                        # SSE格式: "data: {...}"
+                        if line.startswith("data: "):
+                            data_str = line[6:]  # 去掉 "data: " 前缀
+                            
+                            # 跳过 [DONE] 标记
+                            if data_str.strip() == "[DONE]":
+                                break
+                            
+                            try:
+                                import json
+                                data = json.loads(data_str)
+                                
+                                # 提取内容
+                                if data.get("type") == "content_block_delta":
+                                    delta = data.get("delta", {})
+                                    if delta.get("type") == "text_delta":
+                                        text = delta.get("text", "")
+                                        if text:
+                                            yield StreamChunk(content=text)
+                                
+                            except json.JSONDecodeError:
+                                # 忽略无法解析的行
+                                continue
+                                
         except httpx.TimeoutException as exc:
             raise MiniMaxLLMError("[MiniMax] Request timed out") from exc
         except httpx.HTTPError as exc:

@@ -23,10 +23,19 @@ export default defineConfig({
         bypass: (req, res, options) => {
           // Only proxy API requests, not frontend routes
           const path = req.url || ''
+          
+          // Frontend routes (don't proxy)
           if (path === '/templates' || path.startsWith('/templates/edit/')) {
-            // This is a frontend route, don't proxy
             return path
           }
+          
+          // API routes (proxy to backend)
+          // - /templates/list
+          // - /templates/{filename}/content
+          // - /templates/{filename}/recommend-courses
+          // - /templates/course-search
+          // - etc.
+          
           // This is an API request, proxy it
           return null
         },

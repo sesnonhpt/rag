@@ -23,6 +23,8 @@ from app.services.template_export_service import TemplateExportService
 from app.services.template_metadata_service import TemplateMetadataService
 from app.services.teaching_thought_extractor import TeachingThoughtExtractor, PhysicsTeachingThoughtExtractor
 from app.services.lesson_analyzer import LessonAnalyzer
+from app.services.lesson_deep_analyzer import LessonDeepAnalyzer
+
 from src.libs.llm.openai_llm import OpenAILLMError
 from src.libs.llm.base_llm import Message
 from src.observability.logger import get_logger
@@ -78,8 +80,8 @@ class TemplateContentResponse(BaseModel):
 
 class AIModifyRequest(BaseModel):
     """Request for AI content modification."""
-    original_text: str = Field(..., min_length=1, max_length=5000)
-    instruction: str = Field(..., min_length=1, max_length=500)
+    original_text: str = Field(..., min_length=1)
+    instruction: str = Field(..., min_length=1, max_length=1000)
 
 
 class AIModifyResponse(BaseModel):
@@ -127,6 +129,17 @@ class CourseDraftResponse(BaseModel):
     source_summary: str
     transcript_text: str
     draft_markdown: str
+
+
+class LegacyGuidePilotPackageResponse(BaseModel):
+    """Response for legacy guide analysis + editable skeleton."""
+    success: bool = True
+    analysis: Dict[str, Any]
+    thoughts: List[Dict[str, Any]]
+    source_text_preview: str
+
+
+
 
 
 def _format_file_size(size_bytes: int) -> str:
@@ -204,6 +217,23 @@ def _safe_markdown_to_html(markdown_text: str) -> str:
     return "\n".join(blocks)
 
 
+
+def _resolve_template_file_path(filename: str) -> Path:
+    """Resolve a template file path safely within the templates directory."""
+    safe_path = Path(filename).as_posix()
+    if ".." in safe_path or safe_path.startswith("/"):
+        raise HTTPException(status_code=403, detail="访问被拒绝：非法路径")
+
+    file_path = TEMPLATES_DIR / safe_path
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
+
+    if not str(file_path.resolve()).startswith(str(TEMPLATES_DIR.resolve())):
+        raise HTTPException(status_code=403, detail="访问被拒绝")
+
+    return file_path
+
+
 def _transcribe_audio_with_openai_compatible(
     *,
     llm: Any,
@@ -265,10 +295,15 @@ def _transcribe_audio_with_openai_compatible(
 def _extract_course_source(
     *,
     llm: Any,
+    source_url: Optional[str],
     source_text: Optional[str],
     source_file: Optional[UploadFile],
 ) -> Tuple[str, str]:
     """Extract course text from pasted text, document, or audio."""
+    url = str(source_url or "").strip()
+    if url:
+        return extract_course_text_from_url(url), "url_page"
+
     pasted = str(source_text or "").strip()
     if pasted:
         return pasted, "text"
@@ -344,7 +379,7 @@ def _build_course_summary(
 - 是否物理试点：{'是' if prefer_physics_pilot else '否'}
 
 课程原文如下：
-{_normalize_text_snippet(source_text, 20000)}
+{summarize_course_text(source_text, 20000)}
 """
     messages = [
         Message(role="system", content="你擅长把精品课拆解成老师可直接使用的备课要点。"),
@@ -404,7 +439,7 @@ def _build_course_draft(
 {course_summary or '暂无拆解结果'}
 
 可参考的原始课程片段：
-{_normalize_text_snippet(source_text, 12000) if source_text else '暂无原始课程文字稿，请按试点模式生成。'}
+{summarize_course_text(source_text, 12000) if source_text else '暂无原始课程文字稿，请按试点模式生成。'}
 """
     messages = [
         Message(role="system", content="你擅长把精品课内容整理成老师能直接继续打磨的第一版教学设计。"),
@@ -821,70 +856,105 @@ async def extract_teaching_thoughts(
         )
 
 
-@router.post("/templates/co-create-analyze")
-async def analyze_lesson_content(
+@router.post("/templates/analyze-lesson-stream")
+async def analyze_lesson_stream(
     req: Request,
-    content: str = Form(""),
-    file: UploadFile | None = File(default=None),
+    filename: str = Form(...),
 ):
     """
-    分析现有导学案内容
+    流式分析导学案 - 统一的深度分析功能（真正的逐字输出）
     
     Args:
-        content: 粘贴的文本内容
-        file: 上传的文件（doc/docx/pdf/txt）
+        filename: 导学案文件名
     
     Returns:
-        分析结果（JSON）
+        SSE流式响应，逐token输出分析内容
+    """
+    async def event_stream():
+        try:
+            # 读取文件
+            file_path = _resolve_template_file_path(filename)
+            parse_result = file_parser.parse_file(file_path)
+            text = _html_to_text(parse_result.html_content)
+            
+            if not text.strip():
+                yield format_sse_event("error", {"message": "文件内容为空，无法分析"})
+                return
+            
+            # 创建分析器
+            llm = req.app.state.llm
+            analyzer = LessonDeepAnalyzer(llm)
+            
+            # 流式分析
+            async for event in analyzer.analyze_stream(text):
+                event_type = event.get("event", "message")
+                data = event.get("data", {})
+                
+                # 添加stage信息到data中
+                if "stage" in event:
+                    data["stage"] = event["stage"]
+                
+                yield format_sse_event(event_type, data)
+                
+        except HTTPException as exc:
+            yield format_sse_event("error", {"message": str(exc.detail)})
+        except Exception as exc:
+            logger.exception("analyze_lesson_stream.failed")
+            yield format_sse_event("error", {"message": f"分析失败: {str(exc)}"})
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@router.get(
+    "/templates/{filename:path}/pilot-package",
+    response_model=LegacyGuidePilotPackageResponse,
+)
+async def get_legacy_guide_pilot_package(filename: str, req: Request):
+    """
+    Build a compact pilot package for old guide transformation:
+    analysis + teaching thoughts + editable skeleton.
     """
     try:
-        # 1. 提取文本
-        if file:
-            logger.info(f"co_create_analyze.file_upload filename={file.filename}")
-            # 使用现有的文件解析服务
-            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename or "upload").suffix) as tmp:
-                tmp.write(await file.read())
-                tmp_path = Path(tmp.name)
-            
-            try:
-                parse_result = file_parser.parse_file(tmp_path)
-                text = _html_to_text(parse_result.html_content)
-            finally:
-                with contextlib.suppress(FileNotFoundError):
-                    tmp_path.unlink()
-        else:
-            text = content
-        
+        file_path = _resolve_template_file_path(filename)
+        parse_result = file_parser.parse_file(file_path)
+        text = _html_to_text(parse_result.html_content)
         if not text.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="请提供导学案内容（上传文件或粘贴文本）"
-            )
-        
-        logger.info(f"co_create_analyze.analyzing text_length={len(text)}")
-        
-        # 2. 分析内容
+            raise HTTPException(status_code=400, detail="文件内容为空，无法分析。")
+
         llm = req.app.state.llm
         analyzer = LessonAnalyzer(llm)
         analysis = await analyzer.analyze(text)
-        
-        logger.info(
-            f"co_create_analyze.success topic={analysis.topic} subject={analysis.subject}"
+
+        subject = analysis.subject if analysis.subject != "未知学科" else "物理"
+        topic = analysis.topic if analysis.topic != "未命名课题" else file_path.stem
+        grade = analysis.grade if analysis.grade != "未明确年级" else ""
+
+        thought_extractor = PhysicsTeachingThoughtExtractor(llm) if subject == "物理" else TeachingThoughtExtractor(llm)
+        thoughts = await thought_extractor.extract_thoughts(
+            course_text=text,
+            subject=subject,
+            topic=topic,
+            grade=grade,
+            teacher_name="",
         )
-        
-        return {
-            "success": True,
-            "analysis": analysis.to_dict()
-        }
-        
+
+        return LegacyGuidePilotPackageResponse(
+            analysis=analysis.to_dict(),
+            thoughts=[item.to_dict() for item in thoughts],
+            source_text_preview=_normalize_text_snippet(text, 1500),
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.exception("co_create_analyze.failed")
-        raise HTTPException(
-            status_code=500,
-            detail=f"分析失败: {str(e)}"
-        )
+    except Exception as exc:
+        logger.exception("legacy_guide_pilot_package.failed")
+        raise HTTPException(status_code=500, detail=f"导学案拆解失败: {str(exc)}") from exc
+
+
+
 
 
 @router.post("/templates/course-to-draft/stream")
@@ -897,6 +967,7 @@ async def stream_course_to_draft(
     topic: str = Form(""),
     duration_minutes: int = Form(45),
     notes: str = Form(""),
+    source_url: str = Form(""),
     source_text: str = Form(""),
     prefer_physics_pilot: bool = Form(False),
     source_file: UploadFile | None = File(default=None),
@@ -931,11 +1002,14 @@ async def stream_course_to_draft(
                 source_raw_text, source_kind = await asyncio.to_thread(
                     _extract_course_source,
                     llm=llm,
+                    source_url=source_url,
                     source_text=source_text,
                     source_file=source_file,
                 )
 
                 source_label_map = {
+                    "url_page": "课程网页",
+                    "url_text": "网页文本",
                     "text": "文字稿",
                     "document": "文档",
                     "audio": "语音转写",
@@ -1396,3 +1470,4 @@ async def get_template_metadata(filename: str):
             status_code=500,
             detail=f"获取元数据失败: {str(e)}"
         )
+

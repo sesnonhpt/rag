@@ -5,6 +5,7 @@ import type {
   VersionListResponse,
   AIModifyResponse,
   CourseDraftStreamRequest,
+  LegacyGuidePilotPackage,
 } from '@/types/template'
 
 const API_BASE = import.meta.env.DEV
@@ -83,6 +84,80 @@ export const templateApi = {
     return response.data
   },
 
+  async getLegacyGuidePilotPackage(filename: string): Promise<LegacyGuidePilotPackage> {
+    const response = await axios.get(`${API_BASE}/templates/${encodeFilePath(filename)}/pilot-package`)
+    return response.data
+  },
+
+  /**
+   * 流式分析导学案 - 真正的逐字输出
+   */
+  async analyzeLessonStream(
+    filename: string,
+    onEvent: (event: any) => void,
+    onDone: () => void,
+    onError: (err: string) => void
+  ): Promise<() => void> {
+    const controller = new AbortController()
+    const formData = new FormData()
+    formData.append('filename', filename)
+
+    fetch(`${API_BASE}/templates/analyze-lesson-stream`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) {
+        onError(`请求失败: ${response.status} ${response.statusText}`)
+        onDone()
+        return
+      }
+
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+
+          let currentEvent = 'message'
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim()
+            } else if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+                onEvent({ event: currentEvent, data })
+              } catch {
+                // ignore malformed JSON
+              }
+              currentEvent = 'message'
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          onError(err.message || '连接中断')
+        }
+      } finally {
+        onDone()
+      }
+    }).catch((err) => {
+      if (err.name !== 'AbortError') {
+        onError(err.message || '连接失败')
+        onDone()
+      }
+    })
+
+    return () => controller.abort()
+  },
+
   async generateCourseDraftStream(
     data: CourseDraftStreamRequest,
     onEvent: (eventName: string, payload: any) => void,
@@ -99,6 +174,7 @@ export const templateApi = {
     if (data.topic) formData.append('topic', data.topic)
     if (typeof data.duration_minutes === 'number') formData.append('duration_minutes', String(data.duration_minutes))
     if (data.notes) formData.append('notes', data.notes)
+    if (data.source_url) formData.append('source_url', data.source_url)
     if (data.source_text) formData.append('source_text', data.source_text)
     formData.append('prefer_physics_pilot', data.prefer_physics_pilot ? 'true' : 'false')
     if (data.source_file) formData.append('source_file', data.source_file)

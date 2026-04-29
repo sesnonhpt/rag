@@ -94,26 +94,6 @@ export default function TemplateListPage() {
     window.location.href = `/templates/download/${encodedPath}`
   }
 
-  const handleViewThoughts = (filename: string) => {
-    // 提取主题和学科信息
-    const topic = getFileName(filename).replace(/\.(docx?|pdf|txt)$/i, '')
-    const subject = guessSubject(filename)
-    
-    // 跳转到备课思路页面
-    navigate(`/templates/co-create?file=${encodeURIComponent(filename)}&topic=${encodeURIComponent(topic)}&subject=${encodeURIComponent(subject)}`)
-  }
-
-  const guessSubject = (filename: string): string => {
-    const name = filename.toLowerCase()
-    if (name.includes('物理')) return '物理'
-    if (name.includes('化学')) return '化学'
-    if (name.includes('生物')) return '生物'
-    if (name.includes('数学')) return '数学'
-    if (name.includes('语文')) return '语文'
-    if (name.includes('英语')) return '英语'
-    return '未知学科'
-  }
-
   const getFileIcon = (fileType: string) => {
     if (fileType.includes('Word')) return '📄'
     if (fileType.includes('PDF')) return '📕'
@@ -140,30 +120,9 @@ export default function TemplateListPage() {
     <div className="max-w-7xl mx-auto px-4 py-8">
       {/* Header */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h1 className="text-2xl font-bold mb-2">📚 导学案模板库</h1>
-            <p className="text-gray-600">浏览、编辑和管理导学案模板文件</p>
-          </div>
-          <Button 
-            onClick={() => navigate('/templates/co-create')}
-            className="bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700"
-          >
-            🤝 共创模式
-          </Button>
-        </div>
-        
-        {/* 共创模式说明 */}
-        <div className="mb-4 p-4 bg-sky-50 border border-sky-200 rounded-lg">
-          <div className="flex items-start gap-3">
-            <span className="text-2xl">💡</span>
-            <div className="flex-1">
-              <h3 className="font-semibold text-sky-900 mb-1">试试新的共创模式</h3>
-              <p className="text-sm text-sky-700">
-                上传过去的导学案，AI 会展示思考过程，帮你调整和优化。注重过程引导，而不是直接给结果。
-              </p>
-            </div>
-          </div>
+        <div className="mb-4">
+          <h1 className="text-2xl font-bold mb-2">📚 导学案模板库</h1>
+          <p className="text-gray-600">浏览、编辑和管理导学案模板文件</p>
         </div>
         
         <div className="flex gap-4">
@@ -306,30 +265,21 @@ export default function TemplateListPage() {
                           </div>
                         </div>
 
-                        <div className="space-y-2">
+                        <div className="flex gap-2">
                           <Button
                             size="sm"
-                            className="w-full bg-amber-500 hover:bg-amber-600"
-                            onClick={() => handleViewThoughts(template.filename)}
+                            className="flex-1"
+                            onClick={() => handleEdit(template.filename)}
                           >
-                            💡 查看备课思路
+                            编辑
                           </Button>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              className="flex-1"
-                              onClick={() => handleEdit(template.filename)}
-                            >
-                              编辑
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => handleDownload(template.filename)}
-                            >
-                              下载
-                            </Button>
-                          </div>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleDownload(template.filename)}
+                          >
+                            下载
+                          </Button>
                         </div>
                       </div>
                     ))}
