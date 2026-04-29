@@ -5,16 +5,13 @@ import Loading from '@/components/ui/Loading'
 import TeachingThoughtsTimeline from '@/components/TeachingThoughtsTimeline'
 import ContentEnhancer from '@/components/ContentEnhancer'
 import LessonDeepAnalysisPanel from '@/components/LessonDeepAnalysisPanel'
-import { templateApi } from '@/api/template'
-import { renderMarkdown } from '@/utils/markdown'
 import type {
   TemplateContent,
-  CourseDraftProgressEvent,
-  CourseDraftResult,
-  CourseDraftStreamStage,
   TeachingThought,
   LessonAnalysis,
 } from '@/types/template'
+import { templateApi } from '@/api/template'
+import { renderMarkdown } from '@/utils/markdown'
 
 declare global {
   interface Window {
@@ -25,24 +22,6 @@ declare global {
 const DOWNLOAD_BASE_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
   : (import.meta.env.VITE_API_BASE_URL || '')
-
-const courseStageOrder: CourseDraftStreamStage[] = [
-  'queued',
-  'parsing_source',
-  'understanding_course',
-  'extracting_thoughts',
-  'building_design',
-  'teacher_rewrite',
-]
-
-function summarizeDraft(result: CourseDraftResult | null) {
-  if (!result) return ''
-  const firstLine = String(result.draft_markdown || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith('#'))
-  return firstLine || `${result.topic} 的第一版教学设计已经写入左侧，可继续修改。`
-}
 
 export default function TemplateEditorPage() {
   const params = useParams<{ '*': string }>()
@@ -65,20 +44,6 @@ export default function TemplateEditorPage() {
   const [imageLoading, setImageLoading] = useState(false)
   const [showImageDialog, setShowImageDialog] = useState(false)
 
-  const [platform] = useState('国家教育智慧平台')
-  const [teacherName] = useState('')
-  const [subject, setSubject] = useState('物理')
-  const [grade, setGrade] = useState('高中')
-  const [topic, setTopic] = useState('')
-  const [durationMinutes] = useState('45')
-  const [courseNotes] = useState('')
-  const [sourceUrl] = useState('')
-  const [sourceText] = useState('')
-  const [sourceFile] = useState<File | null>(null)
-  const [courseLoading, setCourseLoading] = useState(false)
-  const [courseError, setCourseError] = useState('')
-  const [courseProgress, setCourseProgress] = useState<CourseDraftProgressEvent[]>([])
-  const [courseResult, setCourseResult] = useState<CourseDraftResult | null>(null)
   const [teachingThoughts, setTeachingThoughts] = useState<TeachingThought[]>([])
   const [lessonAnalysis, setLessonAnalysis] = useState<LessonAnalysis | null>(null)
 
@@ -88,8 +53,6 @@ export default function TemplateEditorPage() {
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [quillLoaded, setQuillLoaded] = useState(false)
   const [editorMounted, setEditorMounted] = useState(false)
-  const courseAbortRef = useRef<(() => void) | null>(null)
-
   useEffect(() => {
     if (window.Quill) {
       setQuillLoaded(true)
@@ -236,15 +199,6 @@ export default function TemplateEditorPage() {
       if (data.success) {
         setLessonAnalysis(data.analysis)
         setTeachingThoughts(data.thoughts || [])
-        if (!topic.trim() && data.analysis.topic) {
-          setTopic(data.analysis.topic)
-        }
-        if (data.analysis.subject && data.analysis.subject !== '未知学科') {
-          setSubject(data.analysis.subject)
-        }
-        if (data.analysis.grade && data.analysis.grade !== '未明确年级') {
-          setGrade(data.analysis.grade)
-        }
       }
     } catch (err: any) {
       console.error('生成导学案拆解失败:', err)
@@ -355,107 +309,11 @@ export default function TemplateEditorPage() {
     }
   }
 
-  const applyDraftToEditor = (result: CourseDraftResult) => {
-    if (!quillRef.current) return
-    const html = renderMarkdown(result.draft_markdown || '')
-    quillRef.current.root.innerHTML = html
-    quillRef.current.setSelection(0)
-  }
-
   const applyAnalysisSkeleton = () => {
     if (!quillRef.current || !lessonAnalysis?.skeleton_markdown) return
     quillRef.current.root.innerHTML = renderMarkdown(lessonAnalysis.skeleton_markdown)
     quillRef.current.setSelection(0)
   }
-
-  const startCourseDraft = async (overrides?: Partial<{
-    platform: string
-    teacherName: string
-    subject: string
-    grade: string
-    topic: string
-    durationMinutes: string
-    notes: string
-    sourceUrl: string
-    sourceText: string
-    sourceFile: File | null
-    preferPhysicsPilot: boolean
-  }>) => {
-    const nextPlatform = overrides?.platform ?? platform
-    const nextTeacherName = overrides?.teacherName ?? teacherName
-    const nextSubject = overrides?.subject ?? subject
-    const nextGrade = overrides?.grade ?? grade
-    const nextTopic = overrides?.topic ?? topic
-    const nextDurationMinutes = overrides?.durationMinutes ?? durationMinutes
-    const nextNotes = overrides?.notes ?? courseNotes
-    const nextSourceUrl = overrides?.sourceUrl ?? sourceUrl
-    const nextSourceText = overrides?.sourceText ?? sourceText
-    const nextSourceFile = overrides?.sourceFile ?? sourceFile
-    const preferPhysicsPilot = overrides?.preferPhysicsPilot ?? false
-
-    if (!nextTopic.trim() && !nextSourceUrl.trim() && !nextSourceText.trim() && !nextSourceFile) {
-      alert('请至少填写知识点，或提供精品课 URL / 文字 / 语音材料。')
-      return
-    }
-
-    courseAbortRef.current?.()
-    setCourseLoading(true)
-    setCourseError('')
-    setCourseResult(null)
-    setCourseProgress([])
-
-    const abort = await templateApi.generateCourseDraftStream(
-      {
-        platform: nextPlatform,
-        teacher_name: nextTeacherName,
-        subject: nextSubject,
-        grade: nextGrade,
-        topic: nextTopic,
-        duration_minutes: Number(nextDurationMinutes || 45),
-        notes: nextNotes,
-        source_url: nextSourceUrl,
-        source_text: nextSourceText,
-        prefer_physics_pilot: preferPhysicsPilot,
-        source_file: nextSourceFile,
-      },
-      (eventName, payload) => {
-        if (eventName === 'thoughts') {
-          // 新增：接收备课思路
-          setTeachingThoughts(payload.thoughts || [])
-        } else if (eventName === 'progress') {
-          const progress = payload as CourseDraftProgressEvent
-          setCourseProgress((prev) => {
-            if (prev.some((item) => item.stage === progress.stage)) {
-              return prev.map((item) => (item.stage === progress.stage ? progress : item))
-            }
-            return [...prev, progress].sort(
-              (a, b) => courseStageOrder.indexOf(a.stage) - courseStageOrder.indexOf(b.stage)
-            )
-          })
-        } else if (eventName === 'result') {
-          const result = payload as CourseDraftResult
-          setCourseResult(result)
-          applyDraftToEditor(result)
-          setCourseLoading(false)
-        } else if (eventName === 'error') {
-          setCourseError(payload.message || '生成失败')
-          setCourseLoading(false)
-        }
-      },
-      () => {
-        setCourseLoading(false)
-      },
-      (errMsg) => {
-        setCourseError(errMsg)
-        setCourseLoading(false)
-      }
-    )
-
-    courseAbortRef.current = abort
-  }
-
-  const currentCourseStage = courseProgress[courseProgress.length - 1]
-  const draftSummary = summarizeDraft(courseResult)
 
   if (loading) {
     return <Loading message="正在加载模板编辑器..." />
@@ -680,17 +538,6 @@ export default function TemplateEditorPage() {
               filename={filename}
               onApplySkeleton={applyAnalysisSkeleton}
               getEditorContent={() => quillRef.current?.root?.innerHTML ?? ''}
-              applyToEditor={(html) => {
-                if (!quillRef.current) return
-                // 在编辑器末尾追加内容，不覆盖原文
-                const quill = quillRef.current
-                const length = quill.getLength()
-                // 插入分隔线和新内容
-                quill.insertText(length - 1, '\n\n── AI 改进建议 ──\n', { bold: false })
-                const newLength = quill.getLength()
-                quill.clipboard.dangerouslyPasteHTML(newLength - 1, html)
-                quill.setSelection(newLength)
-              }}
             />
 
             {/* 备课思路 - 横向流水线 */}

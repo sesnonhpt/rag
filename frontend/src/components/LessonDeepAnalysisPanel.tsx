@@ -6,7 +6,6 @@ interface Props {
   filename: string
   onApplySkeleton?: (markdown: string) => void
   getEditorContent?: () => string
-  applyToEditor?: (html: string) => void
 }
 
 const STAGES = [
@@ -217,11 +216,9 @@ function parseImprovementItems(text: string): string[] {
 function SuggestionItem({
   suggestion,
   getEditorContent,
-  applyToEditor,
 }: {
   suggestion: string
   getEditorContent?: () => string
-  applyToEditor?: (html: string) => void
 }) {
   const [state, setState] = useState<'idle' | 'loading' | 'done'>('idle')
   const [result, setResult] = useState('')
@@ -338,7 +335,7 @@ function SuggestionItem({
 
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 
-export default function LessonDeepAnalysisPanel({ filename, getEditorContent, applyToEditor }: Props) {
+export default function LessonDeepAnalysisPanel({ filename, getEditorContent }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [fullText, setFullText] = useState('')
@@ -452,7 +449,6 @@ export default function LessonDeepAnalysisPanel({ filename, getEditorContent, ap
                 key={`${runId}-suggestion-${i}`}
                 suggestion={item}
                 getEditorContent={getEditorContent}
-                applyToEditor={applyToEditor}
               />
             ))}
           </div>
