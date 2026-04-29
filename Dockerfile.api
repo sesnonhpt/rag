@@ -37,6 +37,7 @@ RUN pip install --no-cache-dir uv && \
     pydantic==2.9.0 \
     pyyaml==6.0.2 \
     python-dotenv==1.2.2 \
+    python-multipart==0.0.20 \
     openai==1.50.0 \
     jieba==0.42.1 \
     Pillow==12.1.0 \
