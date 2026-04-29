@@ -7,14 +7,22 @@ endpoints by configuring the base_url.
 
 from __future__ import annotations
 
+import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
 
 
 class OpenAILLMError(RuntimeError):
     """Raised when OpenAI API call fails."""
+
+
+class StreamChunk:
+    """Represents a chunk from streaming response."""
+
+    def __init__(self, content: str):
+        self.content = content
 
 
 class OpenAILLM(BaseLLM):
@@ -194,6 +202,42 @@ class OpenAILLM(BaseLLM):
             usage=usage,
             raw_response=response_data,
         )
+
+    def chat_stream(
+        self,
+        messages: List[Message],
+        trace: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Generator[StreamChunk, None, None]:
+        """Generate a streaming chat completion using OpenAI-compatible SSE."""
+        self.validate_messages(messages)
+
+        temperature = kwargs.get("temperature", self.default_temperature)
+        max_tokens = kwargs.get("max_tokens", self.default_max_tokens)
+        model = kwargs.get("model", self.model)
+
+        api_messages = [{"role": m.role, "content": m.content} for m in messages]
+
+        try:
+            yield from self._call_api_stream(
+                messages=api_messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except OpenAILLMError as e:
+            fallback_model = self._resolve_fallback_model(model)
+            if self._should_retry_with_fallback(e, model, fallback_model):
+                yield from self._call_api_stream(
+                    messages=api_messages,
+                    model=fallback_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    api_key=self.fallback_api_key,
+                    base_url=self.fallback_base_url,
+                )
+            else:
+                raise
     
     def _call_api(
         self,
@@ -257,6 +301,88 @@ class OpenAILLM(BaseLLM):
                     )
                 
                 return response.json()
+        except httpx.TimeoutException as e:
+            raise OpenAILLMError(
+                f"[OpenAI] Request timed out after {self.request_timeout:g} seconds"
+            ) from e
+        except httpx.RequestError as e:
+            raise OpenAILLMError(
+                f"[OpenAI] Connection failed: {type(e).__name__}: {e}"
+            ) from e
+
+    def _call_api_stream(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> Generator[StreamChunk, None, None]:
+        """Make a streaming OpenAI-compatible chat completion call."""
+        import httpx
+
+        effective_base_url = base_url or self.base_url
+        effective_api_key = api_key or self.api_key
+
+        url = f"{effective_base_url.rstrip('/')}/chat/completions"
+        if self.api_version:
+            url += f"?api-version={self.api_version}"
+
+        if self._use_azure_auth:
+            headers = {
+                "api-key": effective_api_key,
+                "Content-Type": "application/json",
+            }
+        else:
+            headers = {
+                "Authorization": f"Bearer {effective_api_key}",
+                "Content-Type": "application/json",
+            }
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
+        try:
+            with httpx.Client(timeout=self.request_timeout) as client:
+                with client.stream("POST", url, json=payload, headers=headers) as response:
+                    if response.status_code != 200:
+                        error_detail = self._parse_error_response(response)
+                        raise OpenAILLMError(
+                            f"[OpenAI] API error (HTTP {response.status_code}): {error_detail}"
+                        )
+
+                    for line in response.iter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        for choice in data.get("choices", []):
+                            delta = choice.get("delta") or {}
+                            content = delta.get("content")
+
+                            if isinstance(content, str) and content:
+                                yield StreamChunk(content=content)
+                            elif isinstance(content, list):
+                                for item in content:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    text = item.get("text")
+                                    if isinstance(text, str) and text:
+                                        yield StreamChunk(content=text)
         except httpx.TimeoutException as e:
             raise OpenAILLMError(
                 f"[OpenAI] Request timed out after {self.request_timeout:g} seconds"

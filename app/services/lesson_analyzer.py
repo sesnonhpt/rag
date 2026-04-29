@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List
@@ -66,6 +67,7 @@ class LessonAnalyzer:
 
     def __init__(self, llm):
         self.llm = llm
+        self.llm_timeout_sec = float(os.environ.get("GUIDE_ANALYZER_LLM_TIMEOUT_SEC", "20"))
 
     async def analyze(self, content: str) -> LessonAnalysis:
         """分析导学案内容。"""
@@ -86,7 +88,10 @@ class LessonAnalyzer:
                     Message(role="user", content=prompt),
                 ])
 
-            response = await asyncio.to_thread(_call_llm)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_call_llm),
+                timeout=self.llm_timeout_sec,
+            )
             analysis = self._parse_response(response.content, content)
 
             logger.info(
@@ -97,7 +102,10 @@ class LessonAnalyzer:
             return analysis
 
         except Exception:
-            logger.exception("lesson_analyzer.analyze_failed")
+            logger.exception(
+                "lesson_analyzer.analyze_failed timeout_sec=%s",
+                self.llm_timeout_sec,
+            )
             return self._get_basic_analysis(content)
 
     def _build_prompt(self, content: str) -> str:

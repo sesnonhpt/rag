@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
@@ -45,6 +46,7 @@ class TeachingThoughtExtractor:
 
     def __init__(self, llm):
         self.llm = llm
+        self.llm_timeout_sec = float(os.environ.get("GUIDE_ANALYZER_LLM_TIMEOUT_SEC", "20"))
 
     async def extract_thoughts(
         self,
@@ -78,7 +80,10 @@ class TeachingThoughtExtractor:
                     Message(role="user", content=prompt),
                 ])
 
-            response = await asyncio.to_thread(_call_llm)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_call_llm),
+                timeout=self.llm_timeout_sec,
+            )
             thoughts = self._parse_json_response(response.content, topic, subject)
 
             logger.info(
@@ -88,7 +93,10 @@ class TeachingThoughtExtractor:
             return thoughts
 
         except Exception:
-            logger.exception("teaching_thought_extractor.extract_failed")
+            logger.exception(
+                "teaching_thought_extractor.extract_failed timeout_sec=%s",
+                self.llm_timeout_sec,
+            )
             return self._get_default_thoughts(topic, subject)
 
     # ── Prompt ────────────────────────────────────────────────────────────────
