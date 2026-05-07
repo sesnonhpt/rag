@@ -5,6 +5,7 @@ import Loading from '@/components/ui/Loading'
 import TeachingThoughtsTimeline from '@/components/TeachingThoughtsTimeline'
 import ContentEnhancer from '@/components/ContentEnhancer'
 import LessonDeepAnalysisPanel from '@/components/LessonDeepAnalysisPanel'
+import DocumentImportDrawer from '@/components/DocumentImportDrawer'
 import type {
   TemplateContent,
   TeachingThought,
@@ -18,10 +19,6 @@ declare global {
     Quill: any
   }
 }
-
-const DOWNLOAD_BASE_URL = import.meta.env.DEV
-  ? 'http://localhost:8000'
-  : (import.meta.env.VITE_API_BASE_URL || '')
 
 export default function TemplateEditorPage() {
   const params = useParams<{ '*': string }>()
@@ -46,6 +43,9 @@ export default function TemplateEditorPage() {
 
   const [teachingThoughts, setTeachingThoughts] = useState<TeachingThought[]>([])
   const [lessonAnalysis, setLessonAnalysis] = useState<LessonAnalysis | null>(null)
+  const [showDocumentImportDrawer, setShowDocumentImportDrawer] = useState(false)
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
 
   const editorRef = useRef<HTMLDivElement | null>(null)
   const quillRef = useRef<any>(null)
@@ -151,11 +151,16 @@ export default function TemplateEditorPage() {
       ) {
         setShowContextMenu(false)
       }
+
+      // Close export menu when clicking outside
+      if (showExportMenu && !(event.target as Element).closest('.relative')) {
+        setShowExportMenu(false)
+      }
     }
 
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showPopover, showContextMenu])
+  }, [showPopover, showContextMenu, showExportMenu])
 
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
@@ -187,13 +192,13 @@ export default function TemplateEditorPage() {
       setLoading(false)
     }
     
-    // 异步生成备课思路，不阻塞正文加载
-    if (filename) {
-      loadLegacyGuidePilotPackage(filename)
-    }
+    // 不再自动加载备课思路，改为手动触发
   }
 
-  const loadLegacyGuidePilotPackage = async (filename: string) => {
+  const handleStartAnalysis = async () => {
+    if (!filename || isAnalyzing) return
+    
+    setIsAnalyzing(true)
     try {
       const data = await templateApi.getLegacyGuidePilotPackage(filename)
       if (data.success) {
@@ -202,7 +207,9 @@ export default function TemplateEditorPage() {
       }
     } catch (err: any) {
       console.error('生成导学案拆解失败:', err)
-      // 失败不影响主流程
+      alert('分析失败，请稍后重试')
+    } finally {
+      setIsAnalyzing(false)
     }
   }
 
@@ -296,23 +303,83 @@ export default function TemplateEditorPage() {
       const html = quillRef.current.root.innerHTML
       await templateApi.saveContent(filename, html, false)
       const result = await templateApi.exportTemplate(filename, format)
-      const downloadUrl = `${DOWNLOAD_BASE_URL}${result.download_url}`
+      
+      // Use relative path for download (will go through vite proxy in dev)
+      const downloadUrl = `/api${result.download_url}`
       const link = document.createElement('a')
       link.href = downloadUrl
       link.download = ''
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-      alert(`导出成功，文件大小 ${(result.file_size / 1024).toFixed(1)} KB`)
+      
+      // Show success message after a short delay
+      setTimeout(() => {
+        alert(`导出成功，文件大小 ${(result.file_size / 1024).toFixed(1)} KB`)
+      }, 100)
     } catch (err: any) {
+      console.error('Export error:', err)
       alert(`导出失败: ${err.message}`)
     }
+  }
+
+  const handleDownloadOriginal = () => {
+    if (!filename) return
+    
+    // Use relative path for download (will go through vite proxy in dev)
+    const downloadUrl = `/api/templates/download/${encodeURIComponent(filename)}`
+    window.open(downloadUrl, '_blank')
   }
 
   const applyAnalysisSkeleton = () => {
     if (!quillRef.current || !lessonAnalysis?.skeleton_markdown) return
     quillRef.current.root.innerHTML = renderMarkdown(lessonAnalysis.skeleton_markdown)
     quillRef.current.setSelection(0)
+  }
+
+  // Handle document import drawer
+  const handleOpenDocumentImport = () => {
+    setShowDocumentImportDrawer(true)
+  }
+
+  const handleCloseDocumentImport = () => {
+    setShowDocumentImportDrawer(false)
+  }
+
+  const handleApplyDocumentToEditor = async (content: string) => {
+    if (!quillRef.current) {
+      console.error('Quill editor not initialized')
+      alert('编辑器未初始化，请刷新页面重试')
+      return
+    }
+
+    try {
+      // Convert markdown to HTML
+      const htmlContent = renderMarkdown(content)
+      
+      // Get current document length
+      const length = quillRef.current.getLength()
+      
+      // Insert newlines before the content if document is not empty
+      if (length > 1) {
+        quillRef.current.insertText(length - 1, '\n\n', 'user')
+      }
+      
+      // Get the position where we'll insert the new content
+      const insertPosition = quillRef.current.getLength() - 1
+      
+      // Use pasteHTML to insert the content
+      quillRef.current.clipboard.dangerouslyPasteHTML(insertPosition, htmlContent, 'user')
+      
+      // Scroll to the inserted content
+      quillRef.current.setSelection(insertPosition, 0)
+      quillRef.current.scrollIntoView()
+      
+      console.log('Content applied to editor successfully at position:', insertPosition)
+    } catch (error) {
+      console.error('Failed to apply content to editor:', error)
+      alert('应用到编辑器失败，请重试')
+    }
   }
 
   if (loading) {
@@ -334,22 +401,19 @@ export default function TemplateEditorPage() {
     <div className="min-h-screen bg-[linear-gradient(180deg,#f6f9fc_0%,#eef3f8_100%)]">
       <div className="mx-auto max-w-[1520px] px-4 py-8 sm:px-6 lg:px-8">
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_520px]">
-          <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)] sm:p-6">
+          <section className="rounded-[12px] border border-slate-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)] sm:p-6">
             <div className="mb-5 flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">教学设计正文</p>
+                {/* <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">教学设计正文</p> */}
                 <h2 className="mt-2 text-2xl font-bold text-slate-900">{content?.filename}</h2>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <div className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">最终可导出内容</div>
-                  <div className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">AI 生成后自动回写</div>
+                  {/* <div className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">最终可导出内容</div>
+                  <div className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">AI 生成后自动回写</div> */}
                 </div>
               </div>
               <div className="flex gap-3">
                 <Button variant="secondary" onClick={() => navigate('/templates')}>
                   返回列表
-                </Button>
-                <Button onClick={() => handleExport('docx')}>
-                  导出 Word
                 </Button>
               </div>
             </div>
@@ -534,6 +598,59 @@ export default function TemplateEditorPage() {
           </section>
 
           <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
+            {/* 文档管理 */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+              <h3 className="text-sm font-semibold text-slate-900 mb-4">文档管理</h3>
+              <div className="mt-4 flex gap-3">
+                <Button variant="secondary" size="sm" onClick={handleOpenDocumentImport} className="flex-1">
+                  <span className="flex items-center justify-center gap-1.5">
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    导入
+                  </span>
+                </Button>
+                <div className="relative flex-1">
+                  <Button size="sm" onClick={() => setShowExportMenu(!showExportMenu)} className="w-full">
+                    <span className="flex items-center justify-center gap-1.5">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      导出
+                    </span>
+                  </Button>
+                  {showExportMenu && (
+                    <div className="absolute right-0 top-full mt-2 w-48 rounded-lg border border-slate-200 bg-white shadow-xl z-10">
+                      <button
+                        onClick={() => {
+                          handleExport('docx')
+                          setShowExportMenu(false)
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 flex items-center gap-2.5 border-b border-slate-100 rounded-t-lg transition-colors"
+                      >
+                        <svg className="h-4 w-4 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span className="font-medium text-slate-900">导出编辑后文档</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleDownloadOriginal()
+                          setShowExportMenu(false)
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 flex items-center gap-2.5 rounded-b-lg transition-colors"
+                      >
+                        <svg className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                        </svg>
+                        <span className="font-medium text-slate-900">下载原始文档</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+
             <LessonDeepAnalysisPanel
               filename={filename}
               onApplySkeleton={applyAnalysisSkeleton}
@@ -541,7 +658,11 @@ export default function TemplateEditorPage() {
             />
 
             {/* 备课思路 - 横向流水线 */}
-            <TeachingThoughtsTimeline thoughts={teachingThoughts} />
+            <TeachingThoughtsTimeline 
+              thoughts={teachingThoughts} 
+              onStartAnalysis={handleStartAnalysis}
+              isAnalyzing={isAnalyzing}
+            />
 
             {/* 内容加强工具 */}
             <ContentEnhancer
@@ -554,17 +675,16 @@ export default function TemplateEditorPage() {
               onApply={handleApplyAI}
               onCancel={handleCancelAI}
             />
-
-            {/* 导出 */}
-            <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">导出</p>
-              <h3 className="mt-2 text-xl font-bold text-slate-900">编辑完成后导出文档</h3>
-              <p className="mt-3 text-sm leading-7 text-slate-500">导出前会自动保存当前编辑内容。</p>
-              <Button className="mt-5 w-full" onClick={() => handleExport('docx')}>导出 DOCX</Button>
-            </section>
           </aside>
         </div>
       </div>
+
+      {/* Document Import Drawer */}
+      <DocumentImportDrawer
+        open={showDocumentImportDrawer}
+        onClose={handleCloseDocumentImport}
+        onApplyToEditor={handleApplyDocumentToEditor}
+      />
     </div>
   )
 }

@@ -108,6 +108,10 @@ data/db/*
 !data/templates
 # Ignore template metadata index
 data/templates/.metadata_index.json
+# Ignore temporary uploaded documents
+data/temp_uploads/
+# Keep processing history structure but ignore content
+!data/processing_history.json
 cache/
 logs/
 *.log

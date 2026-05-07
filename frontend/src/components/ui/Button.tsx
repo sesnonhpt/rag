@@ -17,14 +17,17 @@ export default function Button({
   return (
     <button
       className={clsx(
-        'rounded-lg font-semibold transition-all',
+        'rounded-lg font-medium transition-colors',
         {
-          'bg-primary text-white hover:bg-primary-hover': variant === 'primary',
-          'bg-gray-100 text-gray-700 hover:bg-gray-200': variant === 'secondary',
-          'bg-red-50 text-red-700 hover:bg-red-100': variant === 'danger',
+          // Primary: 蓝色边框白底
+          'border border-blue-500 bg-white text-blue-600 hover:border-blue-600 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed': variant === 'primary',
+          // Secondary: 灰色边框白底
+          'border border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed': variant === 'secondary',
+          // Danger: 红色边框白底
+          'border border-red-500 bg-white text-red-600 hover:border-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed': variant === 'danger',
           'px-3 py-1.5 text-sm': size === 'sm',
-          'px-4 py-2 text-base': size === 'md',
-          'px-6 py-3 text-lg': size === 'lg',
+          'px-4 py-2 text-sm': size === 'md',
+          'px-6 py-2.5 text-base': size === 'lg',
         },
         className
       )}

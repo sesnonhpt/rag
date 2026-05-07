@@ -31,16 +31,14 @@ export default function ContentEnhancer({
   onCancel,
 }: ContentEnhancerProps) {
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">AI 辅助工具</p>
-          <h3 className="mt-2 text-xl font-bold text-slate-900">选中文字后加强内容</h3>
-        </div>
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-slate-900">AI 辅助工具</h3>
+        <p className="mt-1 text-sm text-slate-500">选中文字后加强内容</p>
       </div>
 
       {/* 当前选中内容 */}
-      <div className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
         <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">当前选中内容</div>
         <div className="mt-2 max-h-28 overflow-y-auto text-sm leading-6 text-slate-700">
           {selectedText || '先在左侧正文中选中一段内容，这里会自动显示。'}
@@ -53,7 +51,7 @@ export default function ContentEnhancer({
           <div className="mt-4">
             <label className="block text-sm font-semibold text-slate-700">希望如何加强</label>
             <textarea
-              className="mt-2 w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               rows={3}
               placeholder="例如：补充一个例子；改成更易懂的表达；增加课堂提问"
               value={instruction}
@@ -92,7 +90,7 @@ export default function ContentEnhancer({
 
           {/* 流式思考过程 */}
           {isLoading && (
-            <div className="mt-4 rounded-3xl border border-blue-200 bg-blue-50 px-4 py-4">
+            <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-4">
               <div className="text-sm font-semibold text-blue-800 mb-3">💭 AI 思考过程</div>
               <div className="space-y-2">
                 <div className="flex items-start gap-2 text-sm text-blue-700 animate-pulse">
@@ -113,7 +111,7 @@ export default function ContentEnhancer({
 
           {/* 结果展示 */}
           {result && (
-            <div className="mt-5 rounded-3xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+            <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-4">
               <div className="text-sm font-semibold text-emerald-800">✨ 加强后的版本</div>
               <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-700">{result}</p>
               <div className="mt-4 flex gap-2">

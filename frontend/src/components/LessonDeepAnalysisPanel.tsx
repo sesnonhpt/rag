@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react'
-import Button from './ui/Button'
 import { renderMarkdown } from '@/utils/markdown'
 
 interface Props {
@@ -392,20 +391,27 @@ export default function LessonDeepAnalysisPanel({ filename, getEditorContent }: 
     : []
 
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
       {/* 标题 */}
-      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">导学案分析</p>
+      <h3 className="text-sm font-semibold text-slate-900 mb-4">导学案分析</h3>
 
       {/* 按钮 */}
-      <div className="mt-5">
+      <div className="flex justify-center">
         {!loading ? (
-          <Button className="w-full" onClick={handleAnalyze} disabled={!filename}>
-             开始分析
-          </Button>
+          <button
+            onClick={handleAnalyze}
+            disabled={!filename}
+            className="rounded-lg border border-blue-500 bg-white px-6 py-2 text-sm font-medium text-blue-600 transition-colors hover:border-blue-600 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            开始分析
+          </button>
         ) : (
-          <Button className="w-full" variant="secondary" onClick={handleStop}>
+          <button
+            onClick={handleStop}
+            className="rounded-lg border border-slate-300 bg-white px-6 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50"
+          >
             停止
-          </Button>
+          </button>
         )}
       </div>
 

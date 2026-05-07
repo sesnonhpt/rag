@@ -15,8 +15,8 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-primary"></div>
-              <h1 className="text-xl font-bold text-gray-900">RAG 教案生成系统</h1>
+              {/* <div className="w-2 h-2 rounded-full bg-primary"></div> */}
+              <h1 className="text-xl font-bold text-gray-900">智能教案</h1>
             </div>
             <nav className="flex gap-6">
               {navItems.map((item) => (
