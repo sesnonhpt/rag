@@ -78,7 +78,7 @@ jobs:
             --exclude "data/temp_uploads" \
             --exclude "data/processing_history.json" \
             --exclude "frontend/dist" \
-            -e "ssh -p ${DEPLOY_PORT:-22}" \
+            -e "ssh -p ${DEPLOY_PORT:-22} -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -o TCPKeepAlive=yes" \
             ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/"
 
       - name: Deploy on Server
@@ -89,7 +89,12 @@ jobs:
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
           DEPLOY_BRANCH: ${{ github.ref_name }}
         run: |
-          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+          ssh \
+            -p "${DEPLOY_PORT:-22}" \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=6 \
+            -o TCPKeepAlive=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "set -euo pipefail && \
              APP_DIR='${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}' && \
              test -d \"\$APP_DIR\" && \

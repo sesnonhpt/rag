@@ -35,6 +35,16 @@ build_and_start_stack() {
   sudo docker-compose -f docker-compose.fullstack.yml up -d --build
 }
 
+run_compose_with_output() {
+  local log_file="$1"
+  set +e
+  build_and_start_stack 2>&1 | tee "$log_file"
+  local statuses=(${PIPESTATUS[@]})
+  local compose_status="${statuses[0]}"
+  set -e
+  return "$compose_status"
+}
+
 cd "$APP_DIR"
 
 echo "[deploy] app dir: $APP_DIR"
@@ -63,29 +73,31 @@ remove_image_if_exists rag_backend:latest
 
 # Build and start new containers
 echo "[deploy] building and starting containers..."
-set +e
-compose_output="$(build_and_start_stack 2>&1)"
-compose_status=$?
-set -e
+compose_log="$(mktemp)"
+trap 'rm -f "$compose_log"' EXIT
+
+if run_compose_with_output "$compose_log"; then
+  compose_status=0
+else
+  compose_status=$?
+fi
 
 if [[ $compose_status -ne 0 ]]; then
-  if grep -q 'container name "/rag-backend" is already in use' <<<"$compose_output"; then
+  if grep -q 'container name "/rag-backend" is already in use' "$compose_log"; then
     echo "[deploy] detected stale rag-backend container name conflict, cleaning and retrying once..."
     remove_container_if_exists rag-backend
     remove_container_if_exists rag-api
-    set +e
-    compose_output="$(build_and_start_stack 2>&1)"
-    compose_status=$?
-    set -e
+    if run_compose_with_output "$compose_log"; then
+      compose_status=0
+    else
+      compose_status=$?
+    fi
   fi
 fi
 
 if [[ $compose_status -ne 0 ]]; then
-  echo "$compose_output" >&2
   exit $compose_status
 fi
-
-echo "$compose_output"
 
 # Ensure host nginx routes frontend and backend on port 80.
 if [[ -f "$NGINX_SITE_SOURCE" ]]; then

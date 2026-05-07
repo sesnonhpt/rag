@@ -56,13 +56,18 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
         run: |
-          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+          ssh \
+            -p "${DEPLOY_PORT:-22}" \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=6 \
+            -o TCPKeepAlive=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "mkdir -p '${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/frontend'"
 
           rsync -az --delete \
             --exclude "node_modules" \
             --exclude "dist" \
-            -e "ssh -p ${DEPLOY_PORT:-22}" \
+            -e "ssh -p ${DEPLOY_PORT:-22} -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -o TCPKeepAlive=yes" \
             ./frontend/ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/frontend/"
 
       - name: Deploy Frontend on Server
@@ -73,7 +78,12 @@ jobs:
           DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
           DEPLOY_BRANCH: ${{ github.ref_name }}
         run: |
-          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+          ssh \
+            -p "${DEPLOY_PORT:-22}" \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=6 \
+            -o TCPKeepAlive=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "set -euo pipefail && \
              APP_DIR='${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}' && \
              test -d \"\$APP_DIR\" && \
