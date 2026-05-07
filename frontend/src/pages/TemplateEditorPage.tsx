@@ -357,25 +357,29 @@ export default function TemplateEditorPage() {
       // Convert markdown to HTML
       const htmlContent = renderMarkdown(content)
       
-      // Get current document length
-      const length = quillRef.current.getLength()
+      // Get current document length (Quill always has a trailing newline, so length is at least 1)
+      const currentLength = quillRef.current.getLength()
       
-      // Insert newlines before the content if document is not empty
-      if (length > 1) {
-        quillRef.current.insertText(length - 1, '\n\n', 'user')
+      // Calculate insert position (before the trailing newline)
+      const insertPosition = Math.max(0, currentLength - 1)
+      
+      // Add spacing if document is not empty
+      if (insertPosition > 0) {
+        quillRef.current.insertText(insertPosition, '\n\n', 'silent')
       }
       
-      // Get the position where we'll insert the new content
-      const insertPosition = quillRef.current.getLength() - 1
+      // Get the updated position after adding newlines
+      const finalInsertPosition = quillRef.current.getLength() - 1
       
-      // Use pasteHTML to insert the content
-      quillRef.current.clipboard.dangerouslyPasteHTML(insertPosition, htmlContent, 'user')
+      // Insert the HTML content at the end
+      quillRef.current.clipboard.dangerouslyPasteHTML(finalInsertPosition, htmlContent, 'silent')
       
-      // Scroll to the inserted content
-      quillRef.current.setSelection(insertPosition, 0)
+      // Scroll to the newly inserted content
+      const newLength = quillRef.current.getLength()
+      quillRef.current.setSelection(newLength - 1, 0, 'silent')
       quillRef.current.scrollIntoView()
       
-      console.log('Content applied to editor successfully at position:', insertPosition)
+      console.log('Content applied to editor successfully')
     } catch (error) {
       console.error('Failed to apply content to editor:', error)
       alert('应用到编辑器失败，请重试')

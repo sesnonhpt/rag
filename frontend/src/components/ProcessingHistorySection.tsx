@@ -134,11 +134,12 @@ export default function ProcessingHistorySection({
       ) : (
         <div className="space-y-3">
           {history.map((item) => (
-            <Card
+            <div
               key={item.processing_id}
-              className="cursor-pointer hover:shadow-md transition-shadow"
+              className="cursor-pointer"
               onClick={() => handleSelectHistory(item)}
             >
+              <Card className="hover:shadow-md transition-shadow">
               <div className="flex items-start gap-4">
                 <div className="flex-shrink-0">
                   <svg className="h-10 w-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -165,6 +166,7 @@ export default function ProcessingHistorySection({
                 </svg>
               </div>
             </Card>
+            </div>
           ))}
         </div>
       )}

@@ -429,7 +429,8 @@ async def export_document_docx(request: Request):
                 detail="内容不能为空"
             )
         
-        logger.info(f"Exporting document: {title}, HTML length: {len(content_html)}")
+        logger.info(f"Exporting document: {title}")
+        logger.debug(f"HTML content preview (first 500 chars): {content_html[:500]}")
         
         # Generate DOCX bytes
         def resolve_image_path(src: str):
@@ -476,13 +477,6 @@ async def export_document_docx(request: Request):
         )
     
     except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Document export failed")
-        raise HTTPException(
-            status_code=500,
-            detail=f"导出失败: {str(e)}"
-        )
         raise
     except Exception as e:
         logger.exception("Document export failed")

@@ -323,8 +323,10 @@ def _append_node_content(
     for child in getattr(node, "children", []):
         child_name = getattr(child, "name", None)
         if child_name == "img":
-            _append_text_paragraph(document, " ".join(text_buffer), style=style, role=role)
-            text_buffer = []
+            # Flush text buffer before image
+            if text_buffer:
+                _append_text_paragraph(document, " ".join(text_buffer), style=style, role=role)
+                text_buffer = []
             _append_image_to_docx(
                 document,
                 child.get("src", ""),
@@ -338,11 +340,14 @@ def _append_node_content(
             text_buffer.append(child)
             continue
 
+        # Handle nested elements (strong, em, code, etc.)
         child_text = child.get_text(" ", strip=True)
         if child_text:
             text_buffer.append(child_text)
 
-    _append_text_paragraph(document, " ".join(text_buffer), style=style, role=role)
+    # Flush remaining text
+    if text_buffer:
+        _append_text_paragraph(document, " ".join(text_buffer), style=style, role=role)
 
 
 def _render_html_to_docx(
@@ -352,11 +357,19 @@ def _render_html_to_docx(
     resolve_image_bytes: Optional[Callable[[str], Optional[bytes]]] = None,
 ) -> None:
     soup = BeautifulSoup(html or "", "html.parser")
-    root_nodes = soup.contents if soup.contents else []
+    
+    # If the HTML contains a body tag, extract its contents
+    body = soup.find('body')
+    if body:
+        root_nodes = body.contents
+    else:
+        root_nodes = soup.contents if soup.contents else []
 
     for node in root_nodes:
         if isinstance(node, str):
-            _append_text_paragraph(document, node)
+            text = node.strip()
+            if text:
+                _append_text_paragraph(document, text)
             continue
 
         name = getattr(node, "name", "") or ""

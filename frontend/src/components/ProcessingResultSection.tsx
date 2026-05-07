@@ -15,14 +15,13 @@ interface ProcessingResultSectionProps {
   result: ProcessingResult
   onApplyToEditor: (content: string) => void
   onReprocess: () => void
-  onClose: () => void
+  onClose?: () => void
 }
 
 export default function ProcessingResultSection({
   result,
   onApplyToEditor,
   onReprocess,
-  onClose,
 }: ProcessingResultSectionProps) {
   const [copied, setCopied] = useState(false)
   const [exporting, setExporting] = useState(false)

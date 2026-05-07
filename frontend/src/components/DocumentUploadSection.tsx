@@ -15,6 +15,7 @@ interface DocumentUploadSectionProps {
   onDocumentUploaded: (document: UploadedDocument) => void
   onRemoveDocument: (documentId: string) => void
   onContinue: () => void
+  onViewHistory?: () => void
 }
 
 export default function DocumentUploadSection({
