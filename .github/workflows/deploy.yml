@@ -65,6 +65,8 @@ jobs:
             --filter "P .env" \
             --filter "P data/db/" \
             --filter "P data/images/" \
+            --filter "P data/temp_uploads/" \
+            --filter "P data/processing_history.json" \
             --exclude ".git" \
             --exclude ".env" \
             --exclude ".venv" \
@@ -73,6 +75,8 @@ jobs:
             --exclude "logs" \
             --exclude "data/db" \
             --exclude "data/images" \
+            --exclude "data/temp_uploads" \
+            --exclude "data/processing_history.json" \
             --exclude "frontend/dist" \
             -e "ssh -p ${DEPLOY_PORT:-22}" \
             ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_APP_DIR:-/home/ubuntu/apps/rag}/"
