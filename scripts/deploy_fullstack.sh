@@ -31,6 +31,10 @@ cleanup_docker_artifacts() {
   sudo docker builder prune -af --filter "until=${IMAGE_PRUNE_UNTIL}" >/dev/null 2>&1 || true
 }
 
+build_and_start_stack() {
+  sudo docker-compose -f docker-compose.fullstack.yml up -d --build
+}
+
 cd "$APP_DIR"
 
 echo "[deploy] app dir: $APP_DIR"
@@ -59,7 +63,29 @@ remove_image_if_exists rag_backend:latest
 
 # Build and start new containers
 echo "[deploy] building and starting containers..."
-sudo docker-compose -f docker-compose.fullstack.yml up -d --build
+set +e
+compose_output="$(build_and_start_stack 2>&1)"
+compose_status=$?
+set -e
+
+if [[ $compose_status -ne 0 ]]; then
+  if grep -q 'container name "/rag-backend" is already in use' <<<"$compose_output"; then
+    echo "[deploy] detected stale rag-backend container name conflict, cleaning and retrying once..."
+    remove_container_if_exists rag-backend
+    remove_container_if_exists rag-api
+    set +e
+    compose_output="$(build_and_start_stack 2>&1)"
+    compose_status=$?
+    set -e
+  fi
+fi
+
+if [[ $compose_status -ne 0 ]]; then
+  echo "$compose_output" >&2
+  exit $compose_status
+fi
+
+echo "$compose_output"
 
 # Ensure host nginx routes frontend and backend on port 80.
 if [[ -f "$NGINX_SITE_SOURCE" ]]; then

@@ -16,6 +16,10 @@ if [[ "$SKIP_GIT_SYNC" != "true" ]]; then
   git pull --ff-only origin "$BRANCH"
 fi
 
+build_and_start_frontend() {
+  sudo docker-compose -f docker-compose.fullstack.yml up -d --build frontend
+}
+
 # Stop and remove old frontend container
 echo "[deploy-frontend] stopping old frontend container..."
 sudo docker-compose -f docker-compose.fullstack.yml stop frontend >/dev/null 2>&1 || true
@@ -23,7 +27,28 @@ sudo docker ps -aq --filter "name=rag-frontend" | xargs -r sudo docker rm -f >/d
 
 # Build and start new frontend container
 echo "[deploy-frontend] building and starting frontend..."
-sudo docker-compose -f docker-compose.fullstack.yml up -d --build frontend
+set +e
+compose_output="$(build_and_start_frontend 2>&1)"
+compose_status=$?
+set -e
+
+if [[ $compose_status -ne 0 ]]; then
+  if grep -q 'container name "/rag-frontend" is already in use' <<<"$compose_output"; then
+    echo "[deploy-frontend] detected stale rag-frontend container name conflict, cleaning and retrying once..."
+    sudo docker ps -aq --filter "name=^/rag-frontend$" | xargs -r sudo docker rm -f >/dev/null 2>&1 || true
+    set +e
+    compose_output="$(build_and_start_frontend 2>&1)"
+    compose_status=$?
+    set -e
+  fi
+fi
+
+if [[ $compose_status -ne 0 ]]; then
+  echo "$compose_output" >&2
+  exit $compose_status
+fi
+
+echo "$compose_output"
 
 # Wait for frontend
 echo "[deploy-frontend] waiting for frontend..."
