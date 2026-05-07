@@ -149,7 +149,9 @@ class LessonDeepAnalyzer:
 - 每个部分只写关键点，不要展开解释
 - 每条不超过 20 字
 - 总字数控制在 400 字以内
-- 用 Markdown 格式，二级标题分隔各部分
+- 用 Markdown 格式输出
+- 必须严格使用下面 4 个二级标题，文字和 emoji 必须完全一致，不能改写，不能增删标题
+- 每个标题下直接写内容，不要输出额外前言或结尾
 
 ## 📊 基础信息
 用 3-4 个字段列出：课题、学科年级、难度、预估时长
@@ -167,7 +169,9 @@ class LessonDeepAnalyzer:
 ---
 
 导学案内容：
+<<<GUIDE_TEXT
 {text_preview}
+GUIDE_TEXT>>>
 """
 
     def _parse_complete_analysis(self, content: str) -> Dict[str, Any]:

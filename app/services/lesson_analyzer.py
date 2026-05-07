@@ -114,11 +114,14 @@ class LessonAnalyzer:
         return f"""请分析这份旧导学案，并输出一份老师可直接使用的“教学设计拆解结果”。
 
 要求：
-1. 只输出 JSON，不要输出其他说明。
+1. 只输出 JSON 对象，不要输出其他说明，不要使用 Markdown 代码块包裹。
 2. 重点不是学术分析，而是帮新老师看懂这份导学案背后的设计思路。
-3. 如果信息不完整，请结合常见课堂做合理推断，但不要夸张。
-4. `skeleton_markdown` 必须是一份可继续编辑的导学案骨架，用 Markdown 输出。
-5. 所有列表尽量控制在 3 到 5 条。
+3. 所有字段都必须出现，不得省略任何键。
+4. 如果信息不完整，可以做保守、贴近常见课堂的合理推断，但不要夸张，不要编造成已知事实。
+5. 信息不足时：字符串填“未明确”或“待补充”，数组尽量给出保守建议，不能留成 null。
+6. `difficulty` 只能填写：简单 / 中等 / 困难。
+7. `skeleton_markdown` 必须是一份可继续编辑的导学案骨架，用 Markdown 输出；JSON 内部换行请使用 `\\n`。
+8. 所有列表尽量控制在 3 到 5 条，每条尽量简洁、方便老师直接使用。
 
 输出格式：
 {{
@@ -145,7 +148,9 @@ class LessonAnalyzer:
 }}
 
 旧导学案内容：
+<<<GUIDE_TEXT
 {text_preview}
+GUIDE_TEXT>>>
 """
 
     def _parse_response(self, content: str, original_content: str) -> LessonAnalysis:

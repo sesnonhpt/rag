@@ -59,11 +59,32 @@ export default function ProcessingResultSection({
     try {
       // Copy plain text without markdown syntax
       const plainText = markdownToPlainText(result.result)
-      await navigator.clipboard.writeText(plainText)
+      
+      // Try modern clipboard API first
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(plainText)
+      } else {
+        // Fallback for older browsers or non-HTTPS contexts
+        const textArea = document.createElement('textarea')
+        textArea.value = plainText
+        textArea.style.position = 'fixed'
+        textArea.style.left = '-999999px'
+        textArea.style.top = '-999999px'
+        document.body.appendChild(textArea)
+        textArea.focus()
+        textArea.select()
+        try {
+          document.execCommand('copy')
+        } finally {
+          document.body.removeChild(textArea)
+        }
+      }
+      
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
       console.error('Failed to copy:', err)
+      alert('复制失败，请手动选择文本复制')
     }
   }
 
